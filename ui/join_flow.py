@@ -50,12 +50,7 @@ class JoinFlow:
         state = self.state
         st.subheader("Screen 2.1 – Player name")
         name = st.text_input("Your name", value=state["player_name"])
-        col1, col2 = st.columns(2)
-        if col1.button("Back to entry", key="join_name_back"):
-            self.reset()
-            common.go_home()
-            common.rerun()
-        if col2.button("Next", key="join_name_next"):
+        if st.button("Next", key="join_name_next"):
             cleaned = name.strip()
             if not cleaned:
                 st.error("Please enter your name.")
@@ -124,17 +119,13 @@ class JoinFlow:
             you = " (You)" if player.player_id == state["player_id"] else ""
             st.write(f"- {player.name}{you}")
         st.info("Waiting for host to start the game…")
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         if col1.button("Refresh", key="join_lobby_refresh"):
             common.rerun()
         if col2.button("Change room", key="join_lobby_change"):
+            self._leave_current_room()
             state["step"] = "room_code"
-            state["joined_room_code"] = None
             state["room_code_input"] = ""
-            common.rerun()
-        if col3.button("Back to entry", key="join_lobby_exit"):
-            self.reset()
-            common.go_home()
             common.rerun()
 
     def _game_already_started(self) -> None:
@@ -145,3 +136,14 @@ class JoinFlow:
         if not code:
             return None
         return self.room_service.get_room_by_code(code)
+
+    def _leave_current_room(self) -> None:
+        room_code = self.state.get("joined_room_code")
+        player_id = self.state.get("player_id")
+        if not (room_code and player_id):
+            return
+        room = self.room_service.get_room_by_code(room_code)
+        if room:
+            self.room_service.remove_player(room, player_id)
+        self.state["joined_room_code"] = None
+        self.state["player_id"] = None

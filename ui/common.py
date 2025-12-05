@@ -25,11 +25,11 @@ def go_home() -> None:
 
 
 def rerun() -> None:
-    """Triggers a Streamlit rerun, supporting both new and legacy APIs."""
+    """Trigger a Streamlit rerun while supporting older versions."""
     rerun_fn = getattr(st, "rerun", None)
     if callable(rerun_fn):
         rerun_fn()
-    else:  # Fallback for older Streamlit versions.
+    else:
         getattr(st, "experimental_rerun")()
 
 

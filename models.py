@@ -33,7 +33,7 @@ class Level(str, Enum):
 
 class PlayerRole(str, Enum):
     HOST = "host"
-    LISTENER = "listener"
+    JOINER = "joiner"
 
 
 DEFAULT_THEMES: List[str] = [
@@ -104,9 +104,7 @@ class RoomSettings:
             theme_mode=ThemeMode(data["theme_mode"]),
             selected_themes=list(data.get("selected_themes", [])),
             level_mode=LevelMode(data["level_mode"]),
-            selected_level=Level(data["selected_level"])
-            if data.get("selected_level")
-            else None,
+            selected_level=Level(data["selected_level"]) if data.get("selected_level") else None,
             gameplay_mode=GameplayMode(data["gameplay_mode"]),
             max_score=int(data.get("max_score", 15)),
         )
@@ -150,8 +148,6 @@ class Room:
             created_at=_iso_to_datetime(data["created_at"]),
             updated_at=_iso_to_datetime(data["updated_at"]),
             started=bool(data.get("started", False)),
-            players=[
-                Player.from_dict(player_data) for player_data in data.get("players", [])
-            ],
+            players=[Player.from_dict(player_data) for player_data in data.get("players", [])],
             settings=RoomSettings.from_dict(data["settings"]),
         )

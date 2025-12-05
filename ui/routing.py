@@ -22,7 +22,7 @@ class Router:
         if "route" not in st.session_state:
             st.session_state["route"] = "entry"
         route = st.session_state["route"]
-        st.title("Who Gets You? - Pre-game")
+        st.title("Who Gets You? – Pre-game")
         if route == "entry":
             self._render_entry()
         elif route == "host":

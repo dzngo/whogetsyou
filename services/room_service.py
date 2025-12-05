@@ -10,7 +10,6 @@ from typing import Optional
 
 from models import (
     GameplayMode,
-    Level,
     LevelMode,
     Player,
     PlayerRole,
@@ -83,9 +82,7 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reconfigure_room(
-        self, room: Room, host_name: str, settings: RoomSettings
-    ) -> Room:
+    def reconfigure_room(self, room: Room, host_name: str, settings: RoomSettings) -> Room:
         """Keeps the room code/name but overwrites settings."""
         self._validate_settings(settings)
         host_player = self._build_player(host_name, PlayerRole.HOST)
@@ -101,10 +98,8 @@ class RoomService:
     def add_player(self, room: Room, player_name: str) -> Player:
         """Adds a listener to a room if the game hasn't started."""
         if room.started:
-            raise RoomAlreadyStartedError(
-                f"Room {room.room_code} has already started the game."
-            )
-        player = self._build_player(player_name, PlayerRole.LISTENER)
+            raise RoomAlreadyStartedError(f"Room {room.room_code} has already started the game.")
+        player = self._build_player(player_name, PlayerRole.JOINER)
         room.players.append(player)
         room.update_timestamp()
         self.repository.save(room)
@@ -120,6 +115,16 @@ class RoomService:
         if max_score < 1:
             raise InvalidRoomSettingsError("Max score must be a positive number.")
         room.settings.max_score = max_score
+        room.update_timestamp()
+        self.repository.save(room)
+        return room
+
+    def remove_player(self, room: Room, player_id: str) -> Room:
+        """Removes a player from the room roster if present."""
+        filtered = [player for player in room.players if player.player_id != player_id]
+        if len(filtered) == len(room.players):
+            return room
+        room.players = filtered
         room.update_timestamp()
         self.repository.save(room)
         return room
@@ -144,12 +149,8 @@ class RoomService:
 
     def _validate_settings(self, settings: RoomSettings) -> None:
         if settings.theme_mode == ThemeMode.STATIC and not settings.selected_themes:
-            raise InvalidRoomSettingsError(
-                "At least one theme must be selected for static theme mode."
-            )
+            raise InvalidRoomSettingsError("At least one theme must be selected for static theme mode.")
         if settings.level_mode == LevelMode.STATIC and not settings.selected_level:
-            raise InvalidRoomSettingsError(
-                "A specific level is required when level mode is static."
-            )
+            raise InvalidRoomSettingsError("A specific level is required when level mode is static.")
         if settings.max_score < 1:
             raise InvalidRoomSettingsError("Max score must be greater than zero.")
