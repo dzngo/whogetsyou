@@ -1,0 +1,147 @@
+"""Streamlit implementation of the joiner flow."""
+
+from __future__ import annotations
+
+from typing import Dict
+
+import streamlit as st
+
+from services.room_service import RoomAlreadyStartedError, RoomService
+from ui import common
+
+
+class JoinFlow:
+    STATE_KEY = "join_flow"
+
+    def __init__(self, room_service: RoomService) -> None:
+        self.room_service = room_service
+
+    @staticmethod
+    def _default_state() -> Dict[str, object]:
+        return {
+            "step": "player_name",
+            "player_name": "",
+            "player_id": None,
+            "room_code_input": "",
+            "joined_room_code": None,
+        }
+
+    def reset(self) -> None:
+        common.reset_flow_state(self.STATE_KEY, defaults=self._default_state())
+
+    @property
+    def state(self) -> Dict[str, object]:
+        return common.get_flow_state(self.STATE_KEY, defaults=self._default_state())
+
+    def render(self) -> None:
+        step = self.state["step"]
+        if step == "player_name":
+            self._render_player_name()
+        elif step == "room_code":
+            self._render_room_code()
+        elif step == "lobby":
+            self._render_lobby()
+        else:
+            st.warning("Unknown step. Resetting join flow.")
+            self.reset()
+            common.rerun()
+
+    def _render_player_name(self) -> None:
+        state = self.state
+        st.subheader("Screen 2.1 – Player name")
+        name = st.text_input("Your name", value=state["player_name"])
+        col1, col2 = st.columns(2)
+        if col1.button("Back to entry", key="join_name_back"):
+            self.reset()
+            common.go_home()
+            common.rerun()
+        if col2.button("Next", key="join_name_next"):
+            cleaned = name.strip()
+            if not cleaned:
+                st.error("Please enter your name.")
+            else:
+                state["player_name"] = cleaned
+                state["step"] = "room_code"
+                common.rerun()
+
+    def _render_room_code(self) -> None:
+        state = self.state
+        st.subheader("Screen 2.2 – Enter room code")
+        room_code = st.text_input("Room code", value=state["room_code_input"])
+        col1, col2 = st.columns(2)
+        if col1.button("Back", key="room_code_back"):
+            state["step"] = "player_name"
+            common.rerun()
+        if col2.button("Join room", key="room_code_next"):
+            cleaned = room_code.strip().upper()
+            if not cleaned:
+                st.error("Please enter a room code.")
+                return
+            state["room_code_input"] = cleaned
+            room = self.room_service.get_room_by_code(cleaned)
+            if not room:
+                st.error("Couldn't find any room with that code.")
+                return
+            if room.started:
+                self._game_already_started()
+                return
+            try:
+                player = self.room_service.add_player(room, state["player_name"])
+            except RoomAlreadyStartedError:
+                self._game_already_started()
+                return
+            state["player_id"] = player.player_id
+            state["joined_room_code"] = room.room_code
+            state["step"] = "lobby"
+            common.rerun()
+
+    def _render_lobby(self) -> None:
+        state = self.state
+        st.subheader("Screen 2.3 – Room lobby (Player)")
+        room = self._load_joined_room()
+        if not room:
+            st.warning("Room was closed by the host.")
+            state["step"] = "room_code"
+            state["joined_room_code"] = None
+            state["player_id"] = None
+            common.rerun()
+            return
+        st.write(f"**Room name:** {room.name}")
+        st.write(f"**Room code:** `{room.room_code}`")
+        settings = room.settings
+        st.write(f"**Gameplay mode:** {settings.gameplay_mode.value.title()}")
+        theme_desc = settings.theme_mode.value.title()
+        if settings.theme_mode.value == "static" and settings.selected_themes:
+            theme_desc += f" ({', '.join(settings.selected_themes)})"
+        st.write(f"**Theme mode:** {theme_desc}")
+        level_desc = settings.level_mode.value.title()
+        if settings.level_mode.value == "static" and settings.selected_level:
+            level_desc += f" ({settings.selected_level.value.title()})"
+        st.write(f"**Level mode:** {level_desc}")
+        st.write(f"**Max score:** {settings.max_score}")
+        st.markdown("### Joined players")
+        for player in room.players:
+            you = " (You)" if player.player_id == state["player_id"] else ""
+            st.write(f"- {player.name}{you}")
+        st.info("Waiting for host to start the game…")
+        col1, col2, col3 = st.columns(3)
+        if col1.button("Refresh", key="join_lobby_refresh"):
+            common.rerun()
+        if col2.button("Change room", key="join_lobby_change"):
+            state["step"] = "room_code"
+            state["joined_room_code"] = None
+            state["room_code_input"] = ""
+            common.rerun()
+        if col3.button("Back to entry", key="join_lobby_exit"):
+            self.reset()
+            common.go_home()
+            common.rerun()
+
+    def _game_already_started(self) -> None:
+        st.warning("The game in this room has already started. Please choose another room.")
+
+    def _load_joined_room(self):
+        code = self.state.get("joined_room_code")
+        if not code:
+            return None
+        return self.room_service.get_room_by_code(code)
