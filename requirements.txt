@@ -1,3 +1,4 @@
 streamlit==1.44.1
 streamlit-tags==1.2.8
 openai>=1.51.0
+python-dotenv==1.0.1
