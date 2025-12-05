@@ -1,8 +1,12 @@
 """Entry point for the Who Gets You pre-game prototype."""
 
 import streamlit as st
+from dotenv import load_dotenv
+
 
 from ui import routing
+
+load_dotenv()
 
 
 def main() -> None:
