@@ -88,6 +88,11 @@ class JoinFlow:
             state["player_id"] = player.player_id
             state["joined_room_code"] = room.room_code
             state["step"] = "lobby"
+            st.session_state["player_profile"] = {
+                "player_id": player.player_id,
+                "room_code": room.room_code,
+                "name": player.name,
+            }
             common.rerun()
 
     def _render_lobby(self) -> None:
@@ -99,6 +104,11 @@ class JoinFlow:
             state["step"] = "room_code"
             state["joined_room_code"] = None
             state["player_id"] = None
+            common.rerun()
+            return
+        if room.started:
+            st.session_state["active_room_code"] = room.room_code
+            st.session_state["route"] = "game"
             common.rerun()
             return
         st.write(f"**Room name:** {room.name}")
@@ -147,3 +157,6 @@ class JoinFlow:
             self.room_service.remove_player(room, player_id)
         self.state["joined_room_code"] = None
         self.state["player_id"] = None
+        st.session_state.pop("player_profile", None)
+        if st.session_state.get("active_room_code") == room_code:
+            st.session_state.pop("active_room_code", None)

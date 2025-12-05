@@ -7,6 +7,7 @@ from typing import Dict, Optional
 import streamlit as st
 
 from models import GameplayMode, Level, LevelMode, PlayerRole, RoomSettings, ThemeMode
+from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import InvalidRoomSettingsError, RoomService
 from ui import common
@@ -15,9 +16,15 @@ from ui import common
 class HostFlow:
     STATE_KEY = "host_flow"
 
-    def __init__(self, room_service: RoomService, llm_service: LLMService) -> None:
+    def __init__(
+        self,
+        room_service: RoomService,
+        llm_service: LLMService,
+        game_service: GameService,
+    ) -> None:
         self.room_service = room_service
         self.llm_service = llm_service
+        self.game_service = game_service
 
     @staticmethod
     def _default_state() -> Dict[str, object]:
@@ -260,6 +267,11 @@ class HostFlow:
             self.reset()
             common.rerun()
             return
+        st.session_state["player_profile"] = {
+            "player_id": room.host_id,
+            "room_code": room.room_code,
+            "name": room.host_name,
+        }
         common.show_room_summary(room)
         st.markdown("### Connected players")
         for player in room.players:
@@ -309,7 +321,21 @@ class HostFlow:
         else:
             st.caption("No players to remove.")
 
-        st.info("Game play will be available in the next iteration.")
+        st.markdown("### Game controls")
+        can_start = len(room.players) >= 2
+        if not can_start:
+            st.warning("At least two players are required to start the game.")
+        else:
+            if st.button("Start game"):
+                try:
+                    self.game_service.start_game(room)
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["active_room_code"] = room.room_code
+                    st.session_state["route"] = "game"
+                    common.rerun()
+
         col1, col2 = st.columns(2)
         if col1.button("Refresh lobby", key="lobby_refresh"):
             common.rerun()
@@ -317,6 +343,7 @@ class HostFlow:
             state["step"] = "room_name"
             state["existing_room_code"] = None
             state["room_code"] = None
+            st.session_state.pop("active_room_code", None)
             common.rerun()
 
     def _build_room_settings(self, state: Dict[str, object]) -> RoomSettings:

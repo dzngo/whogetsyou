@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import RoomService
 from ui import common
+from ui.game_flow import GameFlow
 from ui.host_flow import HostFlow
 from ui.join_flow import JoinFlow
 
@@ -14,21 +16,26 @@ from ui.join_flow import JoinFlow
 class Router:
     def __init__(self) -> None:
         self.room_service = RoomService()
+        self.game_service = GameService(self.room_service)
         self.llm_service = LLMService()
-        self.host_flow = HostFlow(self.room_service, self.llm_service)
+        self.game_flow = GameFlow(self.room_service, self.game_service, self.llm_service)
+        self.host_flow = HostFlow(self.room_service, self.llm_service, self.game_service)
         self.join_flow = JoinFlow(self.room_service)
 
     def render(self) -> None:
         if "route" not in st.session_state:
             st.session_state["route"] = "entry"
         route = st.session_state["route"]
-        st.title("Who Gets You? – Pre-game")
+        title = "Who Gets You? – In-game" if route == "game" else "Who Gets You? – Pre-game"
+        st.title(title)
         if route == "entry":
             self._render_entry()
         elif route == "host":
             self.host_flow.render()
         elif route == "join":
             self.join_flow.render()
+        elif route == "game":
+            self.game_flow.render()
         else:
             st.session_state["route"] = "entry"
             common.rerun()

@@ -116,13 +116,28 @@ class OpenAILLM(BaseLLM):
         return _completion_to_text(completion)
 
 
+def _get_secret(name: str) -> Optional[str]:
+    """Return a credential from env vars or Streamlit secrets when available."""
+    value = os.getenv(name)
+    if value:
+        return value
+    try:
+        import streamlit as st  # type: ignore
+
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return None
+
+
 def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     """Instantiate the appropriate LLM wrapper based on the requested model."""
     if model_name is None:
         model_name = "gemini-2.5-flash"  # default model
 
     if model_name.lower() in ["gemini-2.5-flash"]:
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
             raise EnvironmentError(f"GOOGLE_API_KEY  must be set to use {model_name} models")
 
@@ -130,7 +145,7 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
             model=model_name, api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
         )
     if model_name.lower() in ["gpt-4o-mini"]:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = _get_secret("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError(f"OPENAI_API_KEY must be set to use {model_name} models")
         return OpenAILLM(model=model_name, api_key=api_key)

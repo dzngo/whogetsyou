@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class GameplayMode(str, Enum):
@@ -121,6 +121,7 @@ class Room:
     started: bool = False
     players: List[Player] = field(default_factory=list)
     settings: RoomSettings = field(default_factory=RoomSettings)
+    game_state: Dict[str, Any] = field(default_factory=dict)
 
     def update_timestamp(self) -> None:
         self.updated_at = datetime.utcnow()
@@ -136,6 +137,7 @@ class Room:
             "started": self.started,
             "players": [player.to_dict() for player in self.players],
             "settings": self.settings.to_dict(),
+            "game_state": self.game_state,
         }
 
     @classmethod
@@ -150,4 +152,5 @@ class Room:
             started=bool(data.get("started", False)),
             players=[Player.from_dict(player_data) for player_data in data.get("players", [])],
             settings=RoomSettings.from_dict(data["settings"]),
+            game_state=dict(data.get("game_state", {})),
         )
