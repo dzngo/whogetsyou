@@ -374,6 +374,7 @@ class GameFlow:
                         question=question,
                         storyteller_name=storyteller_name,
                         gameplay_mode=room.settings.gameplay_mode,
+                        language=room.settings.language,
                     )
                 st.session_state[true_prefill_key] = resp.answer
                 st.success("True answer suggested.")
@@ -388,6 +389,7 @@ class GameFlow:
                         question=question,
                         true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
                         storyteller_name=storyteller_name,
+                        language=room.settings.language,
                     )
                 st.session_state[trap_prefill_key] = resp.answer
                 st.success("Trap answer suggested.")
@@ -613,6 +615,7 @@ class GameFlow:
                     theme=state.get("selected_theme") or "General",
                     level=Level(state.get("selected_level", Level.NARROW.value)),
                     previous_questions=prev,
+                    language=room.settings.language,
                 )
         except Exception as exc:
             self.game_service.set_state(room, state)
@@ -647,6 +650,7 @@ class GameFlow:
                     gameplay_mode=room.settings.gameplay_mode,
                     level=Level(state.get("selected_level", Level.NARROW.value)),
                     trap_answer=state.get("trap_answer"),
+                    language=room.settings.language,
                 )
         except Exception as exc:
             self.game_service.set_state(room, state)

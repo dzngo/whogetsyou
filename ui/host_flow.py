@@ -6,7 +6,7 @@ from typing import Dict, Optional
 
 import streamlit as st
 
-from models import GameplayMode, Level, LevelMode, PlayerRole, RoomSettings, ThemeMode
+from models import GameplayMode, Level, LevelMode, PlayerRole, RoomSettings, ThemeMode, SUPPORTED_LANGUAGES
 from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import InvalidRoomSettingsError, RoomService
@@ -40,6 +40,7 @@ class HostFlow:
             "custom_themes": [],
             "level_mode": LevelMode.DYNAMIC.value,
             "selected_level": Level.NARROW.value,
+            "language": "en",
             "clear_custom_theme_input": False,
         }
 
@@ -126,6 +127,14 @@ class HostFlow:
             common.rerun()
         if col2.button("Change settings", key="existing_change"):
             state["editing_existing"] = True
+            state["theme_mode"] = room.settings.theme_mode.value
+            state["selected_themes"] = list(room.settings.selected_themes)
+            state["custom_themes"] = []
+            state["level_mode"] = room.settings.level_mode.value
+            state["selected_level"] = (
+                room.settings.selected_level.value if room.settings.selected_level else Level.NARROW.value
+            )
+            state["language"] = room.settings.language
             state["step"] = "theme_mode"
             common.rerun()
         if col3.button("Back", key="existing_back"):
@@ -227,6 +236,20 @@ class HostFlow:
             state["selected_level"] = level_choice
         else:
             state["selected_level"] = Level.NARROW.value
+
+        language_codes = list(SUPPORTED_LANGUAGES.keys())
+        current_language = state.get("language", "en")
+        try:
+            language_index = language_codes.index(current_language)
+        except ValueError:
+            language_index = 0
+        selected_language = st.selectbox(
+            "Language",
+            options=language_codes,
+            index=language_index,
+            format_func=lambda code: SUPPORTED_LANGUAGES.get(code, code.upper()),
+        )
+        state["language"] = selected_language
 
         col1, col2 = st.columns(2)
         if col1.button("Back", key="level_back"):
@@ -359,6 +382,7 @@ class HostFlow:
             selected_level=selected_level,
             gameplay_mode=gameplay_mode,
             max_score=max_score,
+            language=state.get("language", "en"),
         )
 
     def _get_existing_room(self):

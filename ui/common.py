@@ -7,7 +7,7 @@ from typing import Any, Dict
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 
-from models import Room
+from models import Room, SUPPORTED_LANGUAGES
 
 
 def get_flow_state(key: str, *, defaults: Dict[str, Any]) -> Dict[str, Any]:
@@ -49,6 +49,8 @@ def show_room_summary(room: Room) -> None:
     st.write(f"**Theme mode:** {theme_desc}")
     st.write(f"**Level mode:** {level_desc}")
     st.write(f"**Max score:** {settings.max_score}")
+    language = SUPPORTED_LANGUAGES.get(settings.language.lower(), settings.language)
+    st.write(f"**Language:** {language}")
     st.markdown("**Players:**")
     for player in room.players:
         role = "Host" if player.role.value == "host" else "Player"

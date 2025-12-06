@@ -46,6 +46,14 @@ DEFAULT_THEMES: List[str] = [
     "Dreams",
 ]
 
+SUPPORTED_LANGUAGES: Dict[str, str] = {
+    "en": "English",
+    "vn": "Tiếng Việt",
+    "fr": "Français",
+    "es": "Español",
+    "de": "Deutsch",
+}
+
 
 def _iso_to_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
@@ -87,6 +95,7 @@ class RoomSettings:
     selected_level: Optional[Level] = None
     gameplay_mode: GameplayMode = GameplayMode.SIMPLE
     max_score: int = 100
+    language: str = "en"
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -96,6 +105,7 @@ class RoomSettings:
             "selected_level": self.selected_level.value if self.selected_level else None,
             "gameplay_mode": self.gameplay_mode.value,
             "max_score": self.max_score,
+            "language": self.language,
         }
 
     @classmethod
@@ -107,6 +117,7 @@ class RoomSettings:
             selected_level=Level(data["selected_level"]) if data.get("selected_level") else None,
             gameplay_mode=GameplayMode(data["gameplay_mode"]),
             max_score=int(data.get("max_score", 100)),
+            language=str(data.get("language", "en")),
         )
 
 

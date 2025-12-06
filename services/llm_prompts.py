@@ -7,6 +7,8 @@ from typing import Iterable, List
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
+from models import SUPPORTED_LANGUAGES
+
 GAME_RULES_SUMMARY = """
 Who Gets You? is a multiplayer party game focused on storytelling and empathy.
 Game setup:
@@ -44,6 +46,10 @@ Use the rules below to keep questions, answers, and multiple-choice options safe
 Always return JSON that matches the provided schema for the current task."""
 
 
+def _language_name(code: str) -> str:
+    return SUPPORTED_LANGUAGES.get((code or "").lower(), code or "English")
+
+
 def _render_previous_questions(previous_questions: Iterable[str]) -> str:
     cleaned = [q.strip() for q in previous_questions or [] if q and q.strip()]
     if not cleaned:
@@ -52,11 +58,13 @@ def _render_previous_questions(previous_questions: Iterable[str]) -> str:
     return f"Previously used questions:\n{bullets}"
 
 
-def build_question_prompt(theme: str, level: str, previous_questions: Iterable[str]) -> str:
+def build_question_prompt(theme: str, level: str, previous_questions: Iterable[str], language: str) -> str:
+    language_name = _language_name(language)
     return (
         f"Generate a single question for the theme '{theme}'.\n"
         f"Depth: {level.title()} — {LEVEL_DESCRIPTIONS.get(level, 'Keep it warm and sincere')}.\n"
         f"{_render_previous_questions(previous_questions)}\n"
+        f"Write the final question entirely in {language_name}.\n"
         "Requirements:\n"
         "- Make it open-ended and non-repetitive.\n"
         "- Keep it respectful and supportive; avoid cliches, yes/no questions, or anything that might trigger trauma.\n"
@@ -64,7 +72,8 @@ def build_question_prompt(theme: str, level: str, previous_questions: Iterable[s
     )
 
 
-def build_answer_prompt(question: str, storyteller_name: str, gameplay_mode: str) -> str:
+def build_answer_prompt(question: str, storyteller_name: str, gameplay_mode: str, language: str) -> str:
+    language_name = _language_name(language)
     honesty_hint = (
         "Simple mode: answer truthfully while sounding conversational and specific."
         if gameplay_mode == "simple"
@@ -74,17 +83,20 @@ def build_answer_prompt(question: str, storyteller_name: str, gameplay_mode: str
         f"The storyteller is {storyteller_name}. Help them respond to:\n"
         f"Question: {question}\n"
         f"{honesty_hint}\n"
+        f"Return the answer entirely in {language_name}.\n"
         "Return JSON with 'answer' (first-person) and 'rationale' briefly explaining the emotional note you aimed for."
     )
 
 
-def build_trap_prompt(question: str, true_answer: str, storyteller_name: str) -> str:
+def build_trap_prompt(question: str, true_answer: str, storyteller_name: str, language: str) -> str:
+    language_name = _language_name(language)
     return (
         f"The storyteller {storyteller_name} already has the true answer below.\n"
         f"Question: {question}\n"
         f"True answer: {true_answer}\n"
         "Invent a believable but wrong answer (the 'trap') that close friends might mistake for the truth. "
         "Keep tone consistent with the storyteller's voice and avoid contradicting obvious facts from the true answer.\n"
+        f"Write the trap entirely in {language_name}.\n"
         "Return JSON with 'answer' and 'rationale'."
     )
 
@@ -96,7 +108,9 @@ def build_multiple_choice_prompt(
     gameplay_mode: str,
     level: str,
     num_distractors: int,
+    language: str,
 ) -> str:
+    language_name = _language_name(language)
     trap_line = (
         f"The storyteller also provided a trap answer for Bluffing mode:\nTrap: {trap_answer}\n"
         if trap_answer
@@ -107,6 +121,7 @@ def build_multiple_choice_prompt(
         f"Depth guidance: {level.title()} — {LEVEL_DESCRIPTIONS.get(level, 'balanced tone')}.\n"
         f"True answer: {true_answer}\n"
         f"{trap_line}"
+        f"Write every option and rationale entirely in {language_name}.\n"
         f"Include exactly {num_distractors} additional distractors that sound natural.\n"
         "Label answers sequentially starting at A. Output JSON with:\n"
         "- question (string)\n"
