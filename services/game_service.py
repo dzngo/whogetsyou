@@ -61,10 +61,12 @@ class GameService:
             "selected_theme": None,
             "selected_level": room.settings.selected_level.value if room.settings.selected_level else None,
             "question": None,
+            "question_autogen_attempted": False,
             "question_history": [],
             "true_answer": None,
             "trap_answer": None,
             "multiple_choice": None,
+            "options_autogen_attempted": False,
             "listener_guesses": {},
             "scores": _player_scores(room.players),
             "max_score": room.settings.max_score,
@@ -111,9 +113,11 @@ class GameService:
             room.settings.selected_level.value if room.settings.level_mode == LevelMode.STATIC else None
         )
         state["question"] = None
+        state["question_autogen_attempted"] = False
         state["true_answer"] = None
         state["trap_answer"] = None
         state["multiple_choice"] = None
+        state["options_autogen_attempted"] = False
         state["listener_guesses"] = {}
         state["round_summary"] = None
         if room.settings.theme_mode == ThemeMode.STATIC:

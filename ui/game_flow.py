@@ -131,9 +131,7 @@ class GameFlow:
 
         st.markdown("### Scoreboard")
         lookup = self._player_lookup(room)
-        scoreboard = sorted(
-            (pid, score) for pid, score in (state.get("scores") or {}).items()
-        )
+        scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
         scoreboard.sort(key=lambda item: item[1], reverse=True)
         for pid, score in scoreboard:
             player = lookup.get(pid)
@@ -163,7 +161,7 @@ class GameFlow:
             "results": "Final results.",
         }
         st.info(
-            f"**Round {state.get('round', 1)}** – Current Storyteller: {storyteller_name}\n"
+            f"**Round {state.get('round', 1)}** – Current Storyteller: {storyteller_name}  \n"
             f"{phase_labels.get(state.get('phase'), '')}"
         )
 
@@ -187,14 +185,12 @@ class GameFlow:
     ) -> None:
         st.subheader("Phase 1 – Choose theme")
         if room.settings.theme_mode == ThemeMode.STATIC:
-            theme = state.get("selected_theme") or (room.settings.selected_themes[0] if room.settings.selected_themes else "Open conversation")
-            st.info(f"Static theme locked in: **{theme}**")
-            state["selected_theme"] = theme
-            next_phase = (
-                "level_selection"
-                if room.settings.level_mode == LevelMode.DYNAMIC
-                else "question_generation"
+            theme = state.get("selected_theme") or (
+                room.settings.selected_themes[0] if room.settings.selected_themes else "Open conversation"
             )
+            st.info(f"Static theme confirmed: **{theme}**")
+            state["selected_theme"] = theme
+            next_phase = "level_selection" if room.settings.level_mode == LevelMode.DYNAMIC else "question_generation"
             state["phase"] = next_phase
             self._save_state(room, state)
             return
@@ -221,9 +217,7 @@ class GameFlow:
                 return
             state["selected_theme"] = choice
             state["phase"] = (
-                "level_selection"
-                if room.settings.level_mode == LevelMode.DYNAMIC
-                else "question_generation"
+                "level_selection" if room.settings.level_mode == LevelMode.DYNAMIC else "question_generation"
             )
             self._save_state(room, state)
 
@@ -238,7 +232,7 @@ class GameFlow:
         st.subheader("Phase 1 – Choose level")
         if room.settings.level_mode == LevelMode.STATIC:
             level = room.settings.selected_level.value if room.settings.selected_level else Level.NARROW.value
-            st.info(f"Static level locked in: **{level.title()}**")
+            st.info(f"Static level confirmed: **{level.title()}**")
             state["selected_level"] = level
             state["phase"] = "question_generation"
             self._save_state(room, state)
@@ -286,27 +280,18 @@ class GameFlow:
             st.session_state[manual_key] = question_data.get("question", "")
         if prefill_key in st.session_state:
             st.session_state[manual_key] = st.session_state.pop(prefill_key)
+
+        if not question_data:
+            if self._prepare_question(room, state, prefill_key, notify=False):
+                return
+
         manual_value = st.text_area(
             "Edit question",
             key=manual_key,
         )
-        if st.button("Generate question with AI"):
-            try:
-                prev = state.get("question_history", [])[-5:]
-                resp = self.llm_service.generate_question(
-                    theme=state.get("selected_theme") or "General",
-                    level=Level(state.get("selected_level", Level.NARROW.value)),
-                    previous_questions=prev,
-                )
-                payload = resp.model_dump()
-                state["question"] = payload
-                state.setdefault("question_history", []).append(payload["question"])
-                st.session_state[prefill_key] = payload["question"]
-                self._save_state(room, state)
-                st.success("New question generated.")
-            except Exception as exc:
-                st.error(f"LLM error: {exc}")
-            return
+        if st.button("Change question"):
+            if self._prepare_question(room, state, prefill_key, notify=True, force=True):
+                return
 
         if st.button("Confirm question"):
             final_question = manual_value.strip()
@@ -364,37 +349,41 @@ class GameFlow:
             )
 
         if not can_act:
-            st.info("Waiting for the Storyteller to lock answers.")
+            st.info("Waiting for the Storyteller to confirm their answers.")
             return
 
         col1, col2 = st.columns(2)
         storyteller_name = storyteller_obj.name if storyteller_obj else "Storyteller"
         if col1.button("Suggest honest answer"):
             try:
-                resp = self.llm_service.suggest_true_answer(
-                    question=question,
-                    storyteller_name=storyteller_name,
-                    gameplay_mode=room.settings.gameplay_mode,
-                )
+                with st.spinner("Suggesting an honest answer..."):
+                    resp = self.llm_service.suggest_true_answer(
+                        question=question,
+                        storyteller_name=storyteller_name,
+                        gameplay_mode=room.settings.gameplay_mode,
+                    )
                 st.session_state[true_prefill_key] = resp.answer
                 st.success("True answer suggested.")
             except Exception as exc:
-                st.error(f"LLM error: {exc}")
-        if room.settings.gameplay_mode == GameplayMode.BLUFFING and col2.button(
-            "Suggest trap answer"
-        ):
+                st.error(f"Content service error: {exc}")
+            else:
+                common.rerun()
+        if room.settings.gameplay_mode == GameplayMode.BLUFFING and col2.button("Suggest trap answer"):
             try:
-                resp = self.llm_service.suggest_trap_answer(
-                    question=question,
-                    true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
-                    storyteller_name=storyteller_name,
-                )
+                with st.spinner("Suggesting a trap answer..."):
+                    resp = self.llm_service.suggest_trap_answer(
+                        question=question,
+                        true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
+                        storyteller_name=storyteller_name,
+                    )
                 st.session_state[trap_prefill_key] = resp.answer
                 st.success("Trap answer suggested.")
             except Exception as exc:
-                st.error(f"LLM error: {exc}")
+                st.error(f"Content service error: {exc}")
+            else:
+                common.rerun()
 
-        if st.button("Lock answers"):
+        if st.button("Confirm answers"):
             true_answer = st.session_state.get(true_key, "").strip()
             if not true_answer:
                 st.error("True answer cannot be empty.")
@@ -425,6 +414,15 @@ class GameFlow:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         multiple_choice = state.get("multiple_choice") or {}
         options = multiple_choice.get("options", [])
+
+        if not can_act:
+            st.info("Waiting for the Storyteller to confirm the options.")
+            return
+
+        if not options and state.get("true_answer"):
+            if self._prepare_options(room, state):
+                return
+
         if options:
             st.markdown("**Current options:**")
             for option in options:
@@ -432,29 +430,12 @@ class GameFlow:
                 text = option.get("text")
                 kind = option.get("kind")
                 st.write(f"{label}. {text} ({kind})")
-        if not can_act:
-            st.info("Waiting for the Storyteller to lock the options.")
-            return
 
-        if st.button("Generate options with AI"):
-            try:
-                resp = self.llm_service.build_multiple_choice(
-                    question=state.get("question", {}).get("question", ""),
-                    true_answer=state.get("true_answer", ""),
-                    gameplay_mode=room.settings.gameplay_mode,
-                    level=Level(state.get("selected_level", Level.NARROW.value)),
-                    trap_answer=state.get("trap_answer"),
-                )
-                payload = resp.model_dump()
-                payload["options"] = self._shuffle_options(payload.get("options", []))
-                state["multiple_choice"] = payload
-                self._save_state(room, state)
-                st.success("Options generated.")
-            except Exception as exc:
-                st.error(f"LLM error: {exc}")
-            return
+        if st.button("Change options"):
+            if self._prepare_options(room, state, force=True):
+                return
 
-        if options and st.button("Lock options & invite guesses"):
+        if options and st.button("Confirm options & invite guesses"):
             state["phase"] = "guessing"
             state["listener_guesses"] = {}
             self._save_state(room, state)
@@ -578,9 +559,7 @@ class GameFlow:
         if winners:
             names = ", ".join(lookup[pid].name for pid in winners if pid in lookup)
             st.success(f"Winner(s): {names}")
-        scoreboard = sorted(
-            (pid, score) for pid, score in (state.get("scores") or {}).items()
-        )
+        scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
         scoreboard.sort(key=lambda item: item[1], reverse=True)
         st.markdown("### Final scoreboard")
         for pid, score in scoreboard:
@@ -602,6 +581,72 @@ class GameFlow:
     # ------------------------------------------------------------------ #
     # Scoring & helpers
     # ------------------------------------------------------------------ #
+    def _prepare_question(
+        self,
+        room: Room,
+        state: Dict[str, object],
+        prefill_key: str,
+        *,
+        notify: bool,
+        force: bool = False,
+    ) -> bool:
+        if not force and state.get("question_autogen_attempted"):
+            return False
+        state["question_autogen_attempted"] = True
+        try:
+            prev = state.get("question_history", [])[-5:]
+            with st.spinner("Preparing a fresh question..."):
+                resp = self.llm_service.generate_question(
+                    theme=state.get("selected_theme") or "General",
+                    level=Level(state.get("selected_level", Level.NARROW.value)),
+                    previous_questions=prev,
+                )
+        except Exception as exc:
+            self.game_service.set_state(room, state)
+            st.error(f"Content service error: {exc}")
+            return False
+        payload = resp.model_dump()
+        state["question"] = payload
+        state.setdefault("question_history", []).append(payload["question"])
+        st.session_state[prefill_key] = payload["question"]
+        if notify:
+            st.success("Question updated.")
+        self._save_state(room, state)
+        return True
+
+    def _prepare_options(
+        self,
+        room: Room,
+        state: Dict[str, object],
+        *,
+        force: bool = False,
+    ) -> bool:
+        if not state.get("true_answer"):
+            return False
+        if not force and state.get("options_autogen_attempted"):
+            return False
+        state["options_autogen_attempted"] = True
+        try:
+            with st.spinner("Preparing answer options..."):
+                resp = self.llm_service.build_multiple_choice(
+                    question=state.get("question", {}).get("question", ""),
+                    true_answer=state.get("true_answer", ""),
+                    gameplay_mode=room.settings.gameplay_mode,
+                    level=Level(state.get("selected_level", Level.NARROW.value)),
+                    trap_answer=state.get("trap_answer"),
+                )
+        except Exception as exc:
+            self.game_service.set_state(room, state)
+            st.error(f"Content service error: {exc}")
+            return False
+        payload = resp.model_dump()
+        payload["options"] = self._shuffle_options(payload.get("options", []))
+        state["multiple_choice"] = payload
+        if force:
+            st.success("Options updated.")
+        self._save_state(room, state)
+        return True
+
     def _save_state(self, room: Room, state: Dict[str, object]) -> None:
         self.game_service.set_state(room, state)
         common.rerun()
@@ -614,9 +659,7 @@ class GameFlow:
     ) -> Dict[str, object]:
         options = {opt["label"]: opt for opt in state.get("multiple_choice", {}).get("options", [])}
         guesses = state.get("listener_guesses", {})
-        multiplier = {"narrow": 1, "medium": 2, "deep": 3}.get(
-            state.get("selected_level", Level.NARROW.value), 1
-        )
+        multiplier = {"narrow": 1, "medium": 2, "deep": 3}.get(state.get("selected_level", Level.NARROW.value), 1)
         listeners = [player for player in room.players if player.player_id != storyteller_id]
         correct = [pid for pid, guess in guesses.items() if options.get(guess["label"], {}).get("kind") == "true"]
         trap = [pid for pid, guess in guesses.items() if options.get(guess["label"], {}).get("kind") == "trap"]
@@ -655,9 +698,7 @@ class GameFlow:
         for pid, delta in deltas.items():
             state["scores"][pid] = state["scores"].get(pid, 0) + delta
 
-        winners = [
-            pid for pid, score in state["scores"].items() if score >= room.settings.max_score
-        ]
+        winners = [pid for pid, score in state["scores"].items() if score >= room.settings.max_score]
         return {
             "guesses": guesses,
             "deltas": deltas,

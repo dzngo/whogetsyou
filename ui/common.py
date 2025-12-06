@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import streamlit as st
+from streamlit.components.v1 import html as components_html
 
 from models import Room
 
@@ -52,3 +53,66 @@ def show_room_summary(room: Room) -> None:
     for player in room.players:
         role = "Host" if player.role.value == "host" else "Player"
         st.write(f"- {player.name} ({role})")
+
+
+def style_buttons() -> None:
+    """Inject client-side styling for key button categories."""
+    components_html(
+        """
+        <script>
+        (function() {
+          const root = window.parent?.document;
+          if (!root) return;
+          const warnColor = '#000000';
+          const positiveColor = '#0f9d58';
+          const dangerColor = '#c52233';
+          const confirmColor = '#1a73e8';
+          const aiColor = '#ea8600';
+          const paint = () => {
+            const buttons = root.querySelectorAll('button');
+            buttons.forEach((btn) => {
+              const label = btn.innerText.replace(/\\s+/g, ' ').trim().toLowerCase();
+              if (!label) return;
+              let bg = '';
+              if (['end game', 'force reveal'].includes(label)) {
+                bg = warnColor;
+              } else if (label.includes('back') || label.includes('change room') || label.includes('return')) {
+                bg = dangerColor;
+              } else if (
+                label.includes('confirm') || 
+                label.includes('submit') || 
+                label.includes('start') || 
+                label.includes('join') || 
+                label.includes('reuse') || 
+                label.includes('change settings')
+              ) {
+                bg = confirmColor;
+              } else if (label.includes('next') || label.includes('refresh') || label.includes('create')) {
+                bg = positiveColor;
+              } else if (
+                label.includes('suggest') ||
+                label.includes('change question') ||
+                label.includes('change options')
+              ) {
+                bg = aiColor;
+              }
+              if (bg) {
+                btn.style.backgroundColor = bg;
+                btn.style.borderColor = bg;
+                btn.style.color = '#ffffff';
+              }
+            });
+          };
+          const key = '__wg_button_observer';
+          if (root[key]) {
+            try { root[key].disconnect(); } catch (err) {}
+          }
+          const observer = new MutationObserver(() => paint());
+          observer.observe(root.body, { childList: true, subtree: true });
+          root[key] = observer;
+          setTimeout(paint, 0);
+        })();
+        </script>
+        """,
+        height=0,
+    )

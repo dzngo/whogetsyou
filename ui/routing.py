@@ -28,6 +28,7 @@ class Router:
         route = st.session_state["route"]
         title = "Who Gets You? – In-game" if route == "game" else "Who Gets You? – Pre-game"
         st.title(title)
+        common.style_buttons()
         if route == "entry":
             self._render_entry()
         elif route == "host":
