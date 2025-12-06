@@ -161,11 +161,7 @@ class HostFlow:
                 key="custom_theme_input",
             )
             if st.button("Add custom themes", key="add_custom_themes"):
-                new_entries = [
-                    item.strip().title()
-                    for item in custom_input.split(",")
-                    if item.strip()
-                ]
+                new_entries = [item.strip().title() for item in custom_input.split(",") if item.strip()]
                 new_custom = list(state["custom_themes"])
                 changed = False
                 for entry in new_entries:
@@ -301,9 +297,7 @@ class HostFlow:
             self.room_service.update_max_score(room, int(score))
             common.rerun()
 
-        removable_players = [
-            player for player in room.players if player.role != PlayerRole.HOST
-        ]
+        removable_players = [player for player in room.players if player.role != PlayerRole.HOST]
         if removable_players:
             with st.form("remove_player_form"):
                 choices = {player.player_id: player for player in removable_players}
@@ -357,7 +351,7 @@ class HostFlow:
         selected_level = Level(state["selected_level"]) if level_mode == LevelMode.STATIC else None
         existing_room = self._get_existing_room() if state["editing_existing"] else None
         gameplay_mode = existing_room.settings.gameplay_mode if existing_room else GameplayMode.SIMPLE
-        max_score = existing_room.settings.max_score if existing_room else 15
+        max_score = existing_room.settings.max_score if existing_room else 100
         return RoomSettings(
             theme_mode=theme_mode,
             selected_themes=full_theme_list if theme_mode == ThemeMode.STATIC else [],
