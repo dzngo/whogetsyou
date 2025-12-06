@@ -71,7 +71,7 @@ class HostFlow:
 
     def _render_host_name(self) -> None:
         state = self.state
-        st.subheader("Screen 1.1 – Host name")
+        st.subheader("Host name")
         name = st.text_input("Your name", value=state["host_name"])
         if st.button("Next", key="host_name_next"):
             cleaned = name.strip()
@@ -84,7 +84,7 @@ class HostFlow:
 
     def _render_room_name(self) -> None:
         state = self.state
-        st.subheader("Screen 1.2 – Room name")
+        st.subheader("Room name")
         name = st.text_input("Room name", value=state["room_name"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
@@ -109,7 +109,7 @@ class HostFlow:
 
     def _render_existing_room_decision(self) -> None:
         state = self.state
-        st.subheader("Screen 1.2.1 – Reuse existing room")
+        st.subheader("Reuse existing room")
         room = self._get_existing_room()
         if not room:
             st.info("Room not found anymore. Let's create a new one.")
@@ -137,7 +137,7 @@ class HostFlow:
         if state.get("clear_custom_theme_input"):
             state["clear_custom_theme_input"] = False
             st.session_state["custom_theme_input"] = ""
-        st.subheader("Screen 1.3 – Select theme mode")
+        st.subheader("Select theme mode")
         mode = st.radio(
             "Theme mode",
             options=[ThemeMode.STATIC.value, ThemeMode.DYNAMIC.value],
@@ -207,7 +207,7 @@ class HostFlow:
 
     def _render_level_mode(self) -> None:
         state = self.state
-        st.subheader("Screen 1.4 – Select level mode")
+        st.subheader("Select level mode")
         mode = st.radio(
             "Level mode",
             options=[LevelMode.STATIC.value, LevelMode.DYNAMIC.value],
@@ -260,7 +260,7 @@ class HostFlow:
 
     def _render_lobby(self) -> None:
         state = self.state
-        st.subheader("Screen 1.5 – Room lobby (Host)")
+        st.subheader("Room lobby (Host)")
         room = self._load_room(state["room_code"])
         if not room:
             st.warning("Room could not be found. Let's start again.")

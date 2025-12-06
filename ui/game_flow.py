@@ -49,12 +49,21 @@ class GameFlow:
 
         profile = st.session_state.get("player_profile", {})
         current_player_id = profile.get("player_id")
+        current_player_name = profile.get("name")
         is_host = current_player_id == room.host_id
         storyteller_id = self._current_storyteller_id(state)
         storyteller = self._player_lookup(room).get(storyteller_id)
         listeners = [p for p in room.players if p.player_id != storyteller_id]
 
-        self._render_board(room, state, storyteller, listeners, current_player_id, is_host)
+        self._render_board(
+            room,
+            state,
+            storyteller,
+            listeners,
+            current_player_id,
+            current_player_name,
+            is_host,
+        )
 
         phase = state.get("phase")
         if phase == "theme_selection":
@@ -107,9 +116,10 @@ class GameFlow:
         storyteller: Optional[Player],
         listeners: List[Player],
         current_player_id: Optional[str],
+        current_player_name: Optional[str],
         is_host: bool,
     ) -> None:
-        st.subheader("Screen 3.1 – Game board")
+        st.subheader("Game board")
         columns = st.columns(2)
         with columns[0]:
             st.write(f"**Room**: {room.name}")
@@ -137,8 +147,11 @@ class GameFlow:
             player = lookup.get(pid)
             if not player:
                 continue
-            marker = "⭐️" if pid == self._current_storyteller_id(state) else ""
+            marker = "💬" if pid == self._current_storyteller_id(state) else ""
             st.write(f"- {player.name}: **{score}** {marker}")
+
+        if current_player_name:
+            st.caption(f"You are playing as **{current_player_name}**")
 
         current_theme = state.get("selected_theme") or (
             "To be selected" if room.settings.theme_mode == ThemeMode.DYNAMIC else "Static rotation"
@@ -553,7 +566,7 @@ class GameFlow:
                 common.rerun()
 
     def _render_results(self, room: Room, state: Dict[str, object], is_host: bool) -> None:
-        st.subheader("Screen 6.1 – Final results")
+        st.subheader("Final results")
         lookup = self._player_lookup(room)
         winners = state.get("winners", [])
         if winners:

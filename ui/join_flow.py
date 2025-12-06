@@ -48,7 +48,7 @@ class JoinFlow:
 
     def _render_player_name(self) -> None:
         state = self.state
-        st.subheader("Screen 2.1 – Player name")
+        st.subheader("Player name")
         name = st.text_input("Your name", value=state["player_name"])
         if st.button("Next", key="join_name_next"):
             cleaned = name.strip()
@@ -61,7 +61,7 @@ class JoinFlow:
 
     def _render_room_code(self) -> None:
         state = self.state
-        st.subheader("Screen 2.2 – Enter room code")
+        st.subheader("Enter room code")
         room_code = st.text_input("Room code", value=state["room_code_input"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_code_back"):
@@ -97,7 +97,7 @@ class JoinFlow:
 
     def _render_lobby(self) -> None:
         state = self.state
-        st.subheader("Screen 2.3 – Room lobby (Player)")
+        st.subheader("Room lobby (Player)")
         room = self._load_joined_room()
         if not room:
             st.warning("Room was closed by the host.")

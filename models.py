@@ -86,7 +86,7 @@ class RoomSettings:
     level_mode: LevelMode = LevelMode.DYNAMIC
     selected_level: Optional[Level] = None
     gameplay_mode: GameplayMode = GameplayMode.SIMPLE
-    max_score: int = 15
+    max_score: int = 100
 
     def to_dict(self) -> Dict[str, object]:
         return {

@@ -12,7 +12,7 @@ load_dotenv()
 def main() -> None:
     st.set_page_config(
         page_title="Who Gets You?",
-        page_icon="🎲",
+        page_icon="🎭",
         layout="centered",
     )
     routing.run()

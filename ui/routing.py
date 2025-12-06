@@ -42,7 +42,7 @@ class Router:
             common.rerun()
 
     def _render_entry(self) -> None:
-        st.subheader("Screen 0 – Entry")
+        st.subheader("Welcome")
         st.write("Start by choosing whether you want to host a room or join an existing game.")
         col1, col2 = st.columns(2)
         if col1.button("Create room", key="entry_create"):
