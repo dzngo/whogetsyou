@@ -54,6 +54,14 @@ SUPPORTED_LANGUAGES: Dict[str, str] = {
     "de": "Deutsch",
 }
 
+LANGUAGE_FLAGS: Dict[str, str] = {
+    "en": "🇬🇧",
+    "vn": "🇻🇳",
+    "fr": "🇫🇷",
+    "es": "🇪🇸",
+    "de": "🇩🇪",
+}
+
 
 def _iso_to_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)

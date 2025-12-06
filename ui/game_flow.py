@@ -8,7 +8,17 @@ from typing import Dict, List, Optional
 
 import streamlit as st
 
-from models import DEFAULT_THEMES, GameplayMode, Level, LevelMode, Player, Room, ThemeMode
+from models import (
+    DEFAULT_THEMES,
+    LANGUAGE_FLAGS,
+    SUPPORTED_LANGUAGES,
+    GameplayMode,
+    Level,
+    LevelMode,
+    Player,
+    Room,
+    ThemeMode,
+)
 from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import RoomService
@@ -138,6 +148,10 @@ class GameFlow:
             )
             st.write(f"**Level mode**: {level_desc}")
             st.write(f"**Target score**: {room.settings.max_score}")
+            language_name = SUPPORTED_LANGUAGES.get(room.settings.language.lower(), room.settings.language.upper())
+            flag = LANGUAGE_FLAGS.get(room.settings.language.lower(), "")
+            language_display = f"{flag} {language_name}".strip()
+            st.write(f"**Language**: {language_display}")
 
         st.markdown("### Scoreboard")
         lookup = self._player_lookup(room)

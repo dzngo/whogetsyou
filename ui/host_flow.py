@@ -6,7 +6,16 @@ from typing import Dict, Optional
 
 import streamlit as st
 
-from models import GameplayMode, Level, LevelMode, PlayerRole, RoomSettings, ThemeMode, SUPPORTED_LANGUAGES
+from models import (
+    GameplayMode,
+    Level,
+    LevelMode,
+    PlayerRole,
+    RoomSettings,
+    ThemeMode,
+    LANGUAGE_FLAGS,
+    SUPPORTED_LANGUAGES,
+)
 from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import InvalidRoomSettingsError, RoomService
@@ -63,6 +72,8 @@ class HostFlow:
             self._render_theme_mode()
         elif step == "level_mode":
             self._render_level_mode()
+        elif step == "language":
+            self._render_language()
         elif step == "lobby":
             self._render_lobby()
         else:
@@ -237,25 +248,42 @@ class HostFlow:
         else:
             state["selected_level"] = Level.NARROW.value
 
+        col1, col2 = st.columns(2)
+        if col1.button("Back", key="level_back"):
+            state["step"] = "theme_mode"
+            common.rerun()
+        if col2.button("Next", key="level_next"):
+            state["step"] = "language"
+            common.rerun()
+
+    def _render_language(self) -> None:
+        state = self.state
+        st.subheader("Select language")
         language_codes = list(SUPPORTED_LANGUAGES.keys())
         current_language = state.get("language", "en")
         try:
             language_index = language_codes.index(current_language)
         except ValueError:
             language_index = 0
+
+        def _format_language(code: str) -> str:
+            flag = LANGUAGE_FLAGS.get(code, "")
+            name = SUPPORTED_LANGUAGES.get(code, code.upper())
+            return f"{flag} {name}".strip()
+
         selected_language = st.selectbox(
             "Language",
             options=language_codes,
             index=language_index,
-            format_func=lambda code: SUPPORTED_LANGUAGES.get(code, code.upper()),
+            format_func=_format_language,
         )
         state["language"] = selected_language
 
         col1, col2 = st.columns(2)
-        if col1.button("Back", key="level_back"):
-            state["step"] = "theme_mode"
+        if col1.button("Back", key="language_back"):
+            state["step"] = "level_mode"
             common.rerun()
-        if col2.button("Next", key="level_next"):
+        if col2.button("Next", key="language_next"):
             settings = self._build_room_settings(state)
             try:
                 if state["editing_existing"] and state["existing_room_code"]:
