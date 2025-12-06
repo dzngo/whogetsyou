@@ -106,7 +106,7 @@ class RoomSettings:
             level_mode=LevelMode(data["level_mode"]),
             selected_level=Level(data["selected_level"]) if data.get("selected_level") else None,
             gameplay_mode=GameplayMode(data["gameplay_mode"]),
-            max_score=int(data.get("max_score", 15)),
+            max_score=int(data.get("max_score", 100)),
         )
 
 
