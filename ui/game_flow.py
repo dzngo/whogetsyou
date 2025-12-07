@@ -349,6 +349,9 @@ class GameFlow:
         st.markdown(f"**Question:** {question}")
 
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if not can_act:
+            st.info("Waiting for the Storyteller to confirm their answers.")
+            return
         true_key = f"{room.room_code}_true_answer"
         true_prefill_key = f"{true_key}_prefill"
         trap_key = f"{room.room_code}_trap_answer"
@@ -374,10 +377,6 @@ class GameFlow:
                 key=trap_key,
                 disabled=not can_act,
             )
-
-        if not can_act:
-            st.info("Waiting for the Storyteller to confirm their answers.")
-            return
 
         col1, col2 = st.columns(2)
         storyteller_name = storyteller_obj.name if storyteller_obj else "Storyteller"
