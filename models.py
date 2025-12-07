@@ -62,6 +62,17 @@ LANGUAGE_FLAGS: Dict[str, str] = {
     "de": "🇩🇪",
 }
 
+SUPPORTED_LLM_MODELS: Dict[str, str] = {
+    "gpt-4o-mini": "OpenAI GPT-4o Mini",
+    "gpt-4o": "OpenAI GPT-4o",
+    "gpt-4.1-mini": "OpenAI GPT-4.1 Mini",
+    "gpt-4.1": "OpenAI GPT-4.1",
+    "gemini-2.0-flash-lite": "Gemini 2.0 Flash Lite",
+    "gemini-2.0-flash": "Gemini 2.0 Flash",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+    "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
+}
+
 
 def _iso_to_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
@@ -104,6 +115,7 @@ class RoomSettings:
     gameplay_mode: GameplayMode = GameplayMode.SIMPLE
     max_score: int = 100
     language: str = "en"
+    llm_model: str = "gemini-2.5-flash"
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -114,6 +126,7 @@ class RoomSettings:
             "gameplay_mode": self.gameplay_mode.value,
             "max_score": self.max_score,
             "language": self.language,
+            "llm_model": self.llm_model,
         }
 
     @classmethod
@@ -126,6 +139,7 @@ class RoomSettings:
             gameplay_mode=GameplayMode(data["gameplay_mode"]),
             max_score=int(data.get("max_score", 100)),
             language=str(data.get("language", "en")),
+            llm_model=str(data.get("llm_model", "gemini-2.5-flash")),
         )
 
 

@@ -12,8 +12,8 @@ from services import llm_prompts
 class LLMService:
     """High-level helper that orchestrates all LLM calls."""
 
-    def __init__(self, llm: Optional[BaseLLM] = None) -> None:
-        self._llm = llm or get_llm()
+    def __init__(self, llm_name: str = "gemini-2.5-flash") -> None:
+        self._llm = get_llm(model_name=llm_name)
 
     def suggest_themes(self) -> List[str]:
         """Returns a list of starter themes."""

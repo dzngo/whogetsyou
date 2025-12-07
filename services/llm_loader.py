@@ -28,6 +28,14 @@ def _content_to_text(content: Any) -> str:
 def _completion_to_text(completion: Any) -> str:
     """Extract concatenated text from a chat completion response."""
 
+    text = getattr(completion, "output_text", None)
+    if text:
+        if isinstance(text, list):
+            text = "\n".join(str(part).strip() for part in text if str(part).strip())
+        if isinstance(text, str):
+            text = text.strip()
+            if text:
+                return text
     fragments: List[str] = []
     for choice in getattr(completion, "choices", []) or []:
         message = getattr(choice, "message", None)
@@ -41,6 +49,11 @@ def _completion_to_text(completion: Any) -> str:
 
 
 def _safe_structured_parse(completion: Any, response_model: Any):
+    parsed = getattr(completion, "output_parsed", None)
+    if parsed is not None:
+        if isinstance(parsed, response_model):
+            return parsed
+        return response_model.model_validate(parsed)
     for choice in getattr(completion, "choices", []) or []:
         message = getattr(choice, "message", None)
         if message is None:
@@ -134,9 +147,10 @@ def _get_secret(name: str) -> Optional[str]:
 def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     """Instantiate the appropriate LLM wrapper based on the requested model."""
     if model_name is None:
-        model_name = "gpt-4o-mini"  # default model
+        model_name = "gemini-2.5-flash"  # default model
 
-    if model_name.lower() in ["gemini-2.0-flash-lite"]:
+    gemini_models = {"gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash"}
+    if model_name.lower() in gemini_models:
         api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
             raise EnvironmentError(f"GOOGLE_API_KEY  must be set to use {model_name} models")
@@ -144,7 +158,13 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
         return GeminiLLM(
             model=model_name, api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
         )
-    if model_name.lower() in ["gpt-4o-mini"]:
+    openai_models = {
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+    }
+    if model_name.lower() in openai_models:
         api_key = _get_secret("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError(f"OPENAI_API_KEY must be set to use {model_name} models")

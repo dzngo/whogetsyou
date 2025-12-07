@@ -7,6 +7,7 @@ from typing import Dict, Optional
 import streamlit as st
 
 from models import (
+    SUPPORTED_LLM_MODELS,
     GameplayMode,
     Level,
     LevelMode,
@@ -50,6 +51,7 @@ class HostFlow:
             "level_mode": LevelMode.DYNAMIC.value,
             "selected_level": Level.NARROW.value,
             "language": "en",
+            "llm_model": "gemini-2.5-flash",
             "clear_custom_theme_input": False,
         }
 
@@ -146,6 +148,7 @@ class HostFlow:
                 room.settings.selected_level.value if room.settings.selected_level else Level.NARROW.value
             )
             state["language"] = room.settings.language
+            state["llm_model"] = room.settings.llm_model
             state["step"] = "theme_mode"
             common.rerun()
         if col3.button("Back", key="existing_back"):
@@ -279,6 +282,20 @@ class HostFlow:
         )
         state["language"] = selected_language
 
+        llm_codes = list(SUPPORTED_LLM_MODELS.keys())
+        current_llm = state.get("llm_model", "gemini-2.5-flash")
+        try:
+            llm_index = llm_codes.index(current_llm)
+        except ValueError:
+            llm_index = 0
+        selected_llm = st.selectbox(
+            "LLM provider",
+            options=llm_codes,
+            index=llm_index,
+            format_func=lambda code: SUPPORTED_LLM_MODELS.get(code, code),
+        )
+        state["llm_model"] = selected_llm
+
         col1, col2 = st.columns(2)
         if col1.button("Back", key="language_back"):
             state["step"] = "level_mode"
@@ -411,6 +428,7 @@ class HostFlow:
             gameplay_mode=gameplay_mode,
             max_score=max_score,
             language=state.get("language", "en"),
+            llm_model=state.get("llm_model", "gemini-2.5-flash"),
         )
 
     def _get_existing_room(self):
