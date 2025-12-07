@@ -62,16 +62,22 @@ LANGUAGE_FLAGS: Dict[str, str] = {
     "de": "🇩🇪",
 }
 
-SUPPORTED_LLM_MODELS: Dict[str, str] = {
+SUPPORTED_OPENAI_LLM_MODELS: Dict[str, str] = {
     "gpt-4o-mini": "OpenAI GPT-4o Mini",
+    "gpt-4.1-nano": "OpenAI GPT-4.1 Nano",
+    "gpt-5-mini	": "OpenAI GPT-5 Mini",
     "gpt-4o": "OpenAI GPT-4o",
     "gpt-4.1-mini": "OpenAI GPT-4.1 Mini",
     "gpt-4.1": "OpenAI GPT-4.1",
+}
+
+SUPPORTED_GEMINI_LLM_MODELS: Dict[str, str] = {
     "gemini-2.0-flash-lite": "Gemini 2.0 Flash Lite",
     "gemini-2.0-flash": "Gemini 2.0 Flash",
     "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
 }
+SUPPORTED_LLM_MODELS: Dict[str, str] = SUPPORTED_OPENAI_LLM_MODELS | SUPPORTED_GEMINI_LLM_MODELS
 
 
 def _iso_to_datetime(value: str) -> datetime:

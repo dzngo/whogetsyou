@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from openai import OpenAI
 
+from models import SUPPORTED_GEMINI_LLM_MODELS, SUPPORTED_OPENAI_LLM_MODELS
+
 
 def _content_to_text(content: Any) -> str:
     """Normalize message content fragments into a single text string."""
@@ -149,7 +151,7 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     if model_name is None:
         model_name = "gemini-2.5-flash"  # default model
 
-    gemini_models = {"gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash"}
+    gemini_models = list(SUPPORTED_GEMINI_LLM_MODELS.keys())
     if model_name.lower() in gemini_models:
         api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
@@ -158,12 +160,7 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
         return GeminiLLM(
             model=model_name, api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
         )
-    openai_models = {
-        "gpt-4o-mini",
-        "gpt-4o",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-    }
+    openai_models = list(SUPPORTED_OPENAI_LLM_MODELS.keys())
     if model_name.lower() in openai_models:
         api_key = _get_secret("OPENAI_API_KEY")
         if not api_key:

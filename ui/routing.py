@@ -6,7 +6,6 @@ import streamlit as st
 from textwrap import dedent
 
 from services.game_service import GameService
-from services.llm_loader import get_llm
 from services.llm_service import LLMService
 from services.room_service import RoomService
 from ui import common
@@ -117,7 +116,7 @@ class Router:
         current_model = getattr(getattr(self.game_flow.llm_service, "_llm", None), "model_name", None)
         if current_model == target_model:
             return
-        self.game_flow.llm_service = LLMService(get_llm(target_model))
+        self.game_flow.llm_service = LLMService(llm_name=target_model)
 
 
 def run() -> None:
