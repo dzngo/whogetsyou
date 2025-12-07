@@ -134,7 +134,7 @@ def _get_secret(name: str) -> Optional[str]:
 def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     """Instantiate the appropriate LLM wrapper based on the requested model."""
     if model_name is None:
-        model_name = "gemini-2.0-flash-lite"  # default model
+        model_name = "gpt-4o-mini"  # default model
 
     if model_name.lower() in ["gemini-2.0-flash-lite"]:
         api_key = _get_secret("GOOGLE_API_KEY")
