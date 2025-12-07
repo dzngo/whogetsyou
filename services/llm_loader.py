@@ -134,9 +134,9 @@ def _get_secret(name: str) -> Optional[str]:
 def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     """Instantiate the appropriate LLM wrapper based on the requested model."""
     if model_name is None:
-        model_name = "gemini-2.0-flash"  # default model
+        model_name = "gemini-2.0-flash-lite"  # default model
 
-    if model_name.lower() in ["gemini-2.0-flash"]:
+    if model_name.lower() in ["gemini-2.0-flash-lite"]:
         api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
             raise EnvironmentError(f"GOOGLE_API_KEY  must be set to use {model_name} models")
