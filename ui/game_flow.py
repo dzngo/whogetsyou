@@ -286,8 +286,6 @@ class GameFlow:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if question_data:
             st.markdown(f"**Current question:** {question_data.get('question')}")
-            if reason := question_data.get("reason"):
-                st.caption(reason)
 
         if not can_act:
             st.info("Waiting for the Storyteller to validate a question.")
@@ -317,10 +315,7 @@ class GameFlow:
             if not final_question:
                 st.error("Please enter a question.")
                 return
-            state["question"] = {
-                "question": final_question,
-                "reason": question_data.get("reason", "Provided manually."),
-            }
+            state["question"] = {"question": final_question}
             state.setdefault("question_history", []).append(final_question)
             state["phase"] = "answer_entry"
             self._save_state(room, state)
