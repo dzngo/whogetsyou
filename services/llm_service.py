@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from models import DEFAULT_THEMES, GameplayMode, Level
-from services.llm_loader import BaseLLM, get_llm
+from services.llm_loader import get_llm
 from services import llm_prompts
 
 
@@ -89,7 +89,6 @@ class LLMService:
         self,
         question: str,
         true_answer: str,
-        gameplay_mode: GameplayMode,
         level: Level,
         trap_answer: Optional[str] = None,
         num_distractors: int = 2,
@@ -104,7 +103,6 @@ class LLMService:
                     question=question,
                     true_answer=true_answer,
                     trap_answer=trap_answer,
-                    gameplay_mode=gameplay_mode.value,
                     level=level.value,
                     num_distractors=num_distractors,
                     language=language,

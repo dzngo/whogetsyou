@@ -105,7 +105,6 @@ def build_multiple_choice_prompt(
     question: str,
     true_answer: str,
     trap_answer: str | None,
-    gameplay_mode: str,
     level: str,
     num_distractors: int,
     language: str,
@@ -143,7 +142,9 @@ class AnswerSuggestionResponse(BaseModel):
 class MultipleChoiceOption(BaseModel):
     label: str = Field(..., description="Single-letter identifier such as A, B, C.")
     text: str = Field(..., description="What the listeners read.")
-    kind: Literal["true", "trap", "distractor"] = Field(..., description="How this option should be treated in scoring.")
+    kind: Literal["true", "trap", "distractor"] = Field(
+        ..., description="How this option should be treated in scoring."
+    )
     hint: str | None = Field(None, description="Optional meta note for the host about why the option works.")
 
 

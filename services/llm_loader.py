@@ -136,13 +136,11 @@ def _get_secret(name: str) -> Optional[str]:
     value = os.getenv(name)
     if value:
         return value
-    try:
-        import streamlit as st  # type: ignore
+    import streamlit as st  # type: ignore
 
-        if name in st.secrets:
-            return str(st.secrets[name])
-    except Exception:
-        pass
+    if name in st.secrets:
+        return str(st.secrets[name])
+
     return None
 
 

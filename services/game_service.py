@@ -7,11 +7,8 @@ import random
 from typing import Any, Dict, List
 
 from models import (
-    GameplayMode,
-    Level,
     LevelMode,
     Player,
-    PlayerRole,
     Room,
     ThemeMode,
 )
@@ -74,21 +71,19 @@ class GameService:
             "winners": [],
             "static_theme_index": 0,
         }
-        state["phase"] = self._initial_phase(room, state)
+        state["phase"] = self._initial_phase(room)
         if room.settings.theme_mode == ThemeMode.STATIC:
             state["selected_theme"] = self._resolve_static_theme(room, state, advance_index=True)
         return state
 
-    def _initial_phase(self, room: Room, state: Dict[str, Any]) -> str:
+    def _initial_phase(self, room: Room) -> str:
         if room.settings.theme_mode == ThemeMode.DYNAMIC:
             return "theme_selection"
         if room.settings.level_mode == LevelMode.DYNAMIC:
             return "level_selection"
         return "question_generation"
 
-    def _resolve_static_theme(
-        self, room: Room, state: Dict[str, Any], advance_index: bool = True
-    ) -> str:
+    def _resolve_static_theme(self, room: Room, state: Dict[str, Any], advance_index: bool = True) -> str:
         themes = room.settings.selected_themes or ["Open conversation"]
         index = state.get("static_theme_index", 0) % len(themes)
         theme = themes[index]
@@ -122,5 +117,5 @@ class GameService:
         state["round_summary"] = None
         if room.settings.theme_mode == ThemeMode.STATIC:
             state["selected_theme"] = self._resolve_static_theme(room, state, advance_index=True)
-        state["phase"] = self._initial_phase(room, state)
+        state["phase"] = self._initial_phase(room)
         return self.set_state(room, state)

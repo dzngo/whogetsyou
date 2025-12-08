@@ -63,29 +63,26 @@ class GameFlow:
         is_host = current_player_id == room.host_id
         storyteller_id = self._current_storyteller_id(state)
         storyteller = self._player_lookup(room).get(storyteller_id)
-        listeners = [p for p in room.players if p.player_id != storyteller_id]
 
         self._render_board(
             room,
             state,
             storyteller,
-            listeners,
-            current_player_id,
             current_player_name,
             is_host,
         )
 
         phase = state.get("phase")
         if phase == "theme_selection":
-            self._render_theme_phase(room, state, storyteller_id, current_player_id, is_host)
+            self._render_theme_phase(room, state, storyteller_id, current_player_id)
         elif phase == "level_selection":
-            self._render_level_phase(room, state, storyteller_id, current_player_id, is_host)
+            self._render_level_phase(room, state, storyteller_id, current_player_id)
         elif phase == "question_generation":
-            self._render_question_phase(room, state, storyteller_id, current_player_id, is_host)
+            self._render_question_phase(room, state, storyteller_id, current_player_id)
         elif phase == "answer_entry":
-            self._render_answer_phase(room, state, storyteller_id, current_player_id, is_host)
+            self._render_answer_phase(room, state, storyteller_id, current_player_id)
         elif phase == "options":
-            self._render_options_phase(room, state, storyteller_id, current_player_id, is_host)
+            self._render_options_phase(room, state, storyteller_id, current_player_id)
         elif phase == "guessing":
             self._render_guess_phase(room, state, storyteller_id, current_player_id, is_host)
         elif phase == "reveal":
@@ -124,8 +121,6 @@ class GameFlow:
         room: Room,
         state: Dict[str, object],
         storyteller: Optional[Player],
-        listeners: List[Player],
-        current_player_id: Optional[str],
         current_player_name: Optional[str],
         is_host: bool,
     ) -> None:
@@ -208,7 +203,6 @@ class GameFlow:
         state: Dict[str, object],
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
-        is_host: bool,
     ) -> None:
         st.subheader("Phase 1 – Choose theme")
         if room.settings.theme_mode == ThemeMode.STATIC:
@@ -254,7 +248,6 @@ class GameFlow:
         state: Dict[str, object],
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
-        is_host: bool,
     ) -> None:
         st.subheader("Phase 1 – Choose level")
         if room.settings.level_mode == LevelMode.STATIC:
@@ -287,7 +280,6 @@ class GameFlow:
         state: Dict[str, object],
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
-        is_host: bool,
     ) -> None:
         st.subheader("Phase 2 – Question proposal")
         question_data = state.get("question") or {}
@@ -339,7 +331,6 @@ class GameFlow:
         state: Dict[str, object],
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
-        is_host: bool,
     ) -> None:
         st.subheader("Phase 3 – Storyteller answers")
         question = (state.get("question") or {}).get("question")
@@ -433,7 +424,6 @@ class GameFlow:
         state: Dict[str, object],
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
-        is_host: bool,
     ) -> None:
         st.subheader("Phase 4 – Build multiple choice options")
         question = (state.get("question") or {}).get("question", "")
