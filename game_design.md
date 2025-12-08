@@ -3,7 +3,7 @@
 ## 1. Core Game Rules
 
 ### 1.1 Objective  
-Celebrate how well friends “get” one another. Players earn points for demonstrating empathy, intuition, and clever bluffs. The first player to hit the agreed target score (or the leader when the host ends the session) wins.
+Celebrate how well friends “get” one another !
 
 ### 1.2 Setup  
 1. Each person enters a preferred display name.  
@@ -36,9 +36,8 @@ Each round follows the same heartbeat:
 | **Bluffing** | Exactly one listener correct                 | +3 × Mult.      | +3 × Mult.         |
 |           | Some (not all) correct                         | +Depth Mult.    | +Depth Mult.       |
 |           | Everyone correct                               | +2 × Mult.      | 0                  |
-|           | Nobody correct                                 | 0               | 0 (unless trap hit)|
 
-Depth multipliers: Narrow = 1×, Medium = 2×, Deep = 3×. In Bluffing mode, “trap hits” (listeners picking the fake answer) count as “not all correct,” rewarding the Storyteller with the listed bonus.
+Depth multipliers: Shallow = 1×, Medium = 2×, Deep = 3×. In Bluffing mode, “trap hits” (listeners picking the fake answer) count as “not all correct,” rewarding the Storyteller with the listed bonus.
 
 ### 1.5 End Conditions  
 - A player hits or exceeds the target score.  
@@ -56,7 +55,7 @@ Single landing screen with two clear actions: **Create room** or **Join room**. 
 1. **Host name** – Simple input; validation ensures a non-empty value.  
 2. **Room name** – If the name already exists, the host sees the previous settings and can reuse or reconfigure.  
 3. **Theme mode** – Radio buttons for Static vs Dynamic. Static mode exposes multiselect suggestions plus a custom-theme text field; dynamic mode skips ahead.  
-4. **Level mode** – Similar structure to theme selection. Static mode asks for Narrow/Medium/Deep; dynamic mode defaults to Narrow but lets the Storyteller override per turn later.  
+4. **Level mode** – Similar structure to theme selection. Static mode asks for Shallow/Medium/Deep; dynamic mode defaults to Shallow but lets the Storyteller override per turn later.  
 5. **Lobby** – Shows overall configuration, lets the host tweak gameplay mode and max score, remove players if necessary, and finally start the session. Once started, everyone is routed into the in-game view.
 
 ### 2.3 Join Flow  

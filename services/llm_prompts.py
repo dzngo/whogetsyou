@@ -13,7 +13,7 @@ GAME_RULES_SUMMARY = """
 Who Gets You? is a multiplayer party game focused on storytelling and empathy.
 Game setup:
 - Host names the room, chooses gameplay mode (Simple or Bluffing), theme mode (Static/Dynamic), and level mode (Static/Dynamic).
-- Themes describe life domains (e.g., childhood, travel, work). Levels describe depth: Narrow (surface level), Medium (thoughtful), Deep (vulnerable/introspective).
+- Themes describe life domains (e.g., childhood, travel, work). Levels describe depth: Shallow (surface level), Medium (thoughtful), Deep (vulnerable/introspective).
 
 Turn structure:
 1. The Storyteller is selected. If modes are dynamic, they pick the theme/level for the round.
@@ -24,9 +24,9 @@ Turn structure:
 
 Scoring overview (per listener):
 - Simple gameplay:
-  * Narrow: listener +1 for a correct guess. If only some listeners guess correctly Storyteller +1. If all listeners guess correctly Storyteller +2. Medium/Deep multiply listener & storyteller points by 2x/3x.
+  * Shallow: listener +1 for a correct guess. If only some listeners guess correctly Storyteller +1. If all listeners guess correctly Storyteller +2. Medium/Deep multiply listener & storyteller points by 2x/3x.
 - Bluffing gameplay:
-  * Narrow: listener +1 for correct guess. If some (not all) listeners guess correctly Storyteller +1. If exactly one listener guesses correctly, both that listener and Storyteller +3. If everyone guesses correctly each listener +2 and Storyteller 0. Medium/Deep multiply totals by 2x/3x.
+  * Shallow: listener +1 for correct guess. If some (not all) listeners guess correctly Storyteller +1. If exactly one listener guesses correctly, both that listener and Storyteller +3. If everyone guesses correctly each listener +2 and Storyteller 0. Medium/Deep multiply totals by 2x/3x.
 
 Tone guidelines:
 - Questions should celebrate vulnerability without prying. Avoid cliches, yes/no formats, or anything unsafe/triggering.
@@ -35,7 +35,7 @@ Tone guidelines:
 """
 
 LEVEL_DESCRIPTIONS = {
-    "narrow": "Light, ice-breaker territory. Situational facts or quick reflections that anyone can answer without over-sharing.",
+    "shallow": "Light, ice-breaker territory. Situational facts or quick reflections that anyone can answer without over-sharing.",
     "medium": "Thoughtful but comfortable. Encourages short stories or opinions that reveal personality and values.",
     "deep": "Introspective and emotionally aware. Invites vulnerability, formative memories, or personal growth moments while staying respectful.",
 }

@@ -49,7 +49,7 @@ class HostFlow:
             "selected_themes": [],
             "custom_themes": [],
             "level_mode": LevelMode.DYNAMIC.value,
-            "selected_level": Level.NARROW.value,
+            "selected_level": Level.SHALLOW.value,
             "language": "en",
             "llm_model": "gemini-2.5-flash",
             "clear_custom_theme_input": False,
@@ -145,7 +145,7 @@ class HostFlow:
             state["custom_themes"] = []
             state["level_mode"] = room.settings.level_mode.value
             state["selected_level"] = (
-                room.settings.selected_level.value if room.settings.selected_level else Level.NARROW.value
+                room.settings.selected_level.value if room.settings.selected_level else Level.SHALLOW.value
             )
             state["language"] = room.settings.language
             state["llm_model"] = room.settings.llm_model
@@ -239,17 +239,17 @@ class HostFlow:
         if mode == LevelMode.STATIC.value:
             level_choice = st.selectbox(
                 "Choose level",
-                options=[Level.NARROW.value, Level.MEDIUM.value, Level.DEEP.value],
+                options=[Level.SHALLOW.value, Level.MEDIUM.value, Level.DEEP.value],
                 format_func=lambda value: value.title(),
                 index=[
-                    Level.NARROW.value,
+                    Level.SHALLOW.value,
                     Level.MEDIUM.value,
                     Level.DEEP.value,
                 ].index(state["selected_level"]),
             )
             state["selected_level"] = level_choice
         else:
-            state["selected_level"] = Level.NARROW.value
+            state["selected_level"] = Level.SHALLOW.value
 
         col1, col2 = st.columns(2)
         if col1.button("Back", key="level_back"):

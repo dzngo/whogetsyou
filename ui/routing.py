@@ -18,41 +18,43 @@ class Router:
     RULES_SUMMARY = dedent(
         """
         ### Roles
-        There are two roles in each round:
-        - **Storyteller** – answers the prompt and, in Bluffing mode, supplies a believable trap.
-        - **Listeners** – study the Storyteller’s options and vote for the one they believe is true.
+        - **Storyteller** - chooses the question, writes their honest answer, and in Bluffing mode also writes a believable fake answer (the “trap”).
+        - **Listeners** - read all the options and select the one they believe is the Storyteller's true answer.
 
         ---
 
-        ### Objective
-        Earn points by understanding your friends, spotting traps, and making accurate guesses.  
-        The first player to reach the target score (or the leader when the host ends the session) wins.
+        ### How a round works
+        1. **Pick the vibe** - The host or Storyteller chooses the theme and depth (shallow / medium / deep). Deeper rounds are worth more points.
+        2. **Get a question** - A question is proposed; the Storyteller can edit it or ask for a new one.
+        3. **Write answers**  
+           - **Simple mode**: Storyteller writes just their real answer.  
+           - **Bluffing mode**: Storyteller writes a real answer *and* a fake but plausible answer.
+        4. **Build the options** - The app turns those answers into multiple-choice options (real answer, trap if used, plus distractors). The Storyteller checks that everything looks fair.
+        5. **Everyone guesses** - Listeners choose the option they think is real.
+        6. **Reveal & points** - The real answer is shown, who guessed what is revealed, and everyone gains points based on depth and how tricky the round was.
 
         ---
 
-        ### Setup
-        - The host chooses gameplay mode (Simple or Bluffing), theme mode (Static rotation or Dynamic per turn), level mode (Narrow/Medium/Deep, static or dynamic), and the target score.  
-        - Players join via room code and the storyteller order is randomly locked in.
-
-        ### Turn Loop
-        1. Storyteller locks the theme and depth if the room uses dynamic modes.  
-        2. A single open-ended question is proposed; it can be edited or regenerated.  
-        3. Storyteller confirms the honest answer (and a trap answer in Bluffing mode).  
-        4. Multiple-choice options (true answer, trap if applicable, plus distractors) are generated and confirmed.  
-        5. Listeners submit their guesses.  
-        6. Reveal shows the true answer, highlights trap hits, and awards points using depth multipliers (Narrow = ×1, Medium = ×2, Deep = ×3).
-
-        ### Scoring Snapshot
-        - **Depth multipliers** – Narrow = ×1, Medium = ×2, Deep = ×3. Multiply every value below by the current depth.
+        ### Scoring rules
+        - **Depth multiplier** - Shallow = x1, Medium = x2, Deep = x3. All points below are multiplied by this.
         - **Simple mode**
-            - Each correct Listener guess: **+1× depth**.
-            - Storyteller earns **+1× depth** if some (but not all) Listeners are correct.
-            - Storyteller earns **+2× depth** if everyone is correct.
+          - Each correct Listener guess: **+1 x depth**.
+          - If some (but not all) Listeners are correct: Storyteller **+1 x depth**.
+          - If everyone is correct: Storyteller **+2 x depth**.
         - **Bluffing mode**
-            - Exactly one Listener correct: that Listener and the Storyteller both gain **+3× depth**.
-            - Some (but not all) correct: every correct Listener **+1× depth**, Storyteller **+1× depth**.
-            - Everyone correct: each Listener **+2× depth**, Storyteller **+0**.
-            - Nobody correct (trap or distractors): **0** for everyone, but the Storyteller can still celebrate fooling the room.
+          - Exactly one Listener correct: that Listener **+3 x depth**, Storyteller **+3 x depth**.
+          - Some (but not all) correct: each correct Listener **+1 x depth**, Storyteller **+1 x depth**.
+          - Everyone correct: each Listener **+2 x depth**, Storyteller **0**.
+
+        ---
+
+        ### How to win
+        - Deeper questions (Medium / Deep) give bigger point rewards.
+        - In Simple mode, everyone is just trying to match the real answer; correct guesses give points to both Listeners and the Storyteller, with a bonus when *everyone* gets it.
+        - In Bluffing mode, Listeners want to find the real answer, while the Storyteller wants at least some people to fall for the trap without losing *everyone*.
+        - The game ends when someone reaches the target score (or the host ends the session). The highest score wins.
+
+
         """
     ).strip()
 

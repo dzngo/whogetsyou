@@ -26,7 +26,7 @@ class LevelMode(str, Enum):
 
 
 class Level(str, Enum):
-    NARROW = "narrow"
+    SHALLOW = "shallow"
     MEDIUM = "medium"
     DEEP = "deep"
 

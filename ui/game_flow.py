@@ -251,7 +251,7 @@ class GameFlow:
     ) -> None:
         st.subheader("Phase 1 – Choose level")
         if room.settings.level_mode == LevelMode.STATIC:
-            level = room.settings.selected_level.value if room.settings.selected_level else Level.NARROW.value
+            level = room.settings.selected_level.value if room.settings.selected_level else Level.SHALLOW.value
             st.info(f"Static level confirmed: **{level.title()}**")
             state["selected_level"] = level
             state["phase"] = "question_generation"
@@ -265,7 +265,7 @@ class GameFlow:
 
         level = st.selectbox(
             "Question depth",
-            options=[Level.NARROW.value, Level.MEDIUM.value, Level.DEEP.value],
+            options=[Level.SHALLOW.value, Level.MEDIUM.value, Level.DEEP.value],
             format_func=lambda value: value.title(),
             key=f"{room.room_code}_level_select",
         )
@@ -616,7 +616,7 @@ class GameFlow:
             with st.spinner("Preparing a fresh question..."):
                 resp = self.llm_service.generate_question(
                     theme=state.get("selected_theme") or "General",
-                    level=Level(state.get("selected_level", Level.NARROW.value)),
+                    level=Level(state.get("selected_level", Level.SHALLOW.value)),
                     previous_questions=prev,
                     language=room.settings.language,
                 )
@@ -650,7 +650,7 @@ class GameFlow:
                 resp = self.llm_service.build_multiple_choice(
                     question=state.get("question", {}).get("question", ""),
                     true_answer=state.get("true_answer", ""),
-                    level=Level(state.get("selected_level", Level.NARROW.value)),
+                    level=Level(state.get("selected_level", Level.SHALLOW.value)),
                     trap_answer=state.get("trap_answer"),
                     language=room.settings.language,
                 )
@@ -678,7 +678,7 @@ class GameFlow:
     ) -> Dict[str, object]:
         options = {opt["label"]: opt for opt in state.get("multiple_choice", {}).get("options", [])}
         guesses = state.get("listener_guesses", {})
-        multiplier = {"narrow": 1, "medium": 2, "deep": 3}.get(state.get("selected_level", Level.NARROW.value), 1)
+        multiplier = {"shallow": 1, "medium": 2, "deep": 3}.get(state.get("selected_level", Level.SHALLOW.value), 1)
         listeners = [player for player in room.players if player.player_id != storyteller_id]
         correct = [pid for pid, guess in guesses.items() if options.get(guess["label"], {}).get("kind") == "true"]
         trap = [pid for pid, guess in guesses.items() if options.get(guess["label"], {}).get("kind") == "trap"]
