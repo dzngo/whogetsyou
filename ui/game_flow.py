@@ -204,7 +204,7 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Phase 1 – Choose theme")
+        st.subheader("Choose theme")
         if room.settings.theme_mode == ThemeMode.STATIC:
             theme = state.get("selected_theme") or (
                 room.settings.selected_themes[0] if room.settings.selected_themes else "Open conversation"
@@ -281,7 +281,7 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Phase 2 – Question proposal")
+        st.subheader("Question proposal")
         question_data = state.get("question") or {}
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if question_data:
@@ -327,7 +327,7 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Phase 3 – Storyteller answers")
+        st.subheader("Storyteller answers")
         question = (state.get("question") or {}).get("question")
         if not question:
             st.warning("Question not set yet.")
@@ -420,7 +420,7 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Phase 4 – Build multiple choice options")
+        st.subheader("Build multiple choice options")
         question = (state.get("question") or {}).get("question", "")
         if question:
             st.markdown(f"**Question:** {question}")
@@ -436,19 +436,56 @@ class GameFlow:
             if self._prepare_options(room, state):
                 return
 
-        if options:
-            st.markdown("**Current options:**")
+        options = (state.get("multiple_choice") or {}).get("options", [])
+        if not options:
+            st.warning("Options not ready yet.")
+            return
+
+        st.markdown("**Current options:**")
+        for option in options:
+            label = option.get("label")
+            kind = option.get("kind")
+            key = f"{room.room_code}_option_{label}"
+            prefill_key = f"{key}_prefill"
+            if key not in st.session_state:
+                st.session_state[key] = option.get("text", "")
+            if prefill_key in st.session_state:
+                st.session_state[key] = st.session_state.pop(prefill_key)
+
+            col_text, col_btn = st.columns([4, 1])
+            with col_text:
+                st.text_area(
+                    f"{label} ({kind})",
+                    key=key,
+                )
+            with col_btn:
+                if st.button("Regenerate", key=f"{key}_regen"):
+                    try:
+                        with st.spinner("Regenerating option..."):
+                            new_text = self.llm_service.refine_option_text(
+                                question=question,
+                                true_answer=state.get("true_answer", ""),
+                                kind=kind,
+                                current_text=st.session_state.get(key, ""),
+                                trap_answer=state.get("trap_answer"),
+                                language=room.settings.language,
+                            )
+                            if new_text:
+                                st.session_state[prefill_key] = new_text
+                                st.success("Option updated.")
+                                common.rerun()
+                    except Exception as exc:
+                        st.error(f"Content service error: {exc}")
+
+        if can_act and st.button("Confirm options & invite guesses"):
+            # Persist any manual edits back to the game state.
             for option in options:
                 label = option.get("label")
-                text = option.get("text")
-                kind = option.get("kind")
-                st.write(f"{label}. {text} ({kind})")
-
-        if st.button("Change options"):
-            if self._prepare_options(room, state, force=True):
-                return
-
-        if options and st.button("Confirm options & invite guesses"):
+                key = f"{room.room_code}_option_{label}"
+                text = st.session_state.get(key, "").strip()
+                if text:
+                    option["text"] = text
+            state.setdefault("multiple_choice", {})["options"] = options
             state["phase"] = "guessing"
             state["listener_guesses"] = {}
             self._save_state(room, state)
@@ -461,7 +498,7 @@ class GameFlow:
         current_player_id: Optional[str],
         is_host: bool,
     ) -> None:
-        st.subheader("Phase 5 – Guessing")
+        st.subheader("Guessing")
         question = (state.get("question") or {}).get("question", "")
         if question:
             st.markdown(f"**Question:** {question}")
@@ -520,7 +557,7 @@ class GameFlow:
         current_player_id: Optional[str],
         is_host: bool,
     ) -> None:
-        st.subheader("Phase 6 – Reveal & scoring")
+        st.subheader("Reveal & scoring")
         question = (state.get("question") or {}).get("question", "")
         st.markdown(f"**Question:** {question}")
         st.write(f"**True answer:** {state.get('true_answer')}")
@@ -641,7 +678,7 @@ class GameFlow:
             return False
         state["options_autogen_attempted"] = True
         try:
-            with st.spinner("Preparing answer options..."):
+            with st.spinner("Preparing multiple choices..."):
                 resp = self.llm_service.build_multiple_choice(
                     question=state.get("question", {}).get("question", ""),
                     true_answer=state.get("true_answer", ""),

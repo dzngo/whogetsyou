@@ -109,3 +109,30 @@ class LLMService:
             },
         ]
         return self._llm.parse_structured(messages, llm_prompts.MultipleChoiceResponse)
+
+    def refine_option_text(
+        self,
+        question: str,
+        true_answer: str,
+        kind: str,
+        current_text: str,
+        trap_answer: Optional[str] = None,
+        language: str = "en",
+    ) -> str:
+        """Ask the LLM to rewrite a single option text."""
+        messages = [
+            {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": llm_prompts.build_option_refine_prompt(
+                    question=question,
+                    true_answer=true_answer,
+                    trap_answer=trap_answer,
+                    kind=kind,
+                    current_text=current_text,
+                    language=language,
+                ),
+            },
+        ]
+        text = self._llm.complete_text(messages)
+        return text.strip()

@@ -98,7 +98,7 @@ def style_buttons() -> None:
               } else if (
                 label.includes('suggest') ||
                 label.includes('change question') ||
-                label.includes('change options')
+                label.includes('regenerate')
               ) {
                 bg = aiColor;
               }

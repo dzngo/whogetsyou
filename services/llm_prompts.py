@@ -124,6 +124,37 @@ def build_multiple_choice_prompt(
     )
 
 
+def build_option_refine_prompt(
+    question: str,
+    true_answer: str,
+    trap_answer: str | None,
+    kind: str,
+    current_text: str,
+    language: str,
+) -> str:
+    language_name = _language_name(language)
+    base = (
+        f"You are adjusting a single multiple-choice option for the game 'Who Gets You?'.\n"
+        f"Question: {question}\n"
+        f"True answer: {true_answer}\n"
+    )
+    if trap_answer:
+        base += f"Trap answer (if applicable): {trap_answer}\n"
+    kind_explainer = {
+        "true": "Rewrite the *true* answer so it stays faithful to the meaning but feels natural, specific, and human.",
+        "trap": "Rewrite the *trap* answer so it sounds very believable and close to the truth, but still not exactly correct.",
+        "distractor": "Rewrite the *distractor* so it feels plausible and in-character but clearly not the real answer.",
+    }.get(kind, "Rewrite this option so it fits the tone and context of the other answers.")
+    return (
+        base
+        + f"Current option text: {current_text or '[empty]'}\n"
+        + f"Role of this option: {kind}.\n"
+        + f"{kind_explainer}\n"
+        + f"Write the new option entirely in {language_name}.\n"
+        + "Return only the revised option text, no bullet points or explanations."
+    )
+
+
 class QuestionLLMResponse(BaseModel):
     question: str = Field(..., description="The final question text delivered to the storyteller.")
 
