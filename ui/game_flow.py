@@ -650,7 +650,6 @@ class GameFlow:
                 resp = self.llm_service.build_multiple_choice(
                     question=state.get("question", {}).get("question", ""),
                     true_answer=state.get("true_answer", ""),
-                    gameplay_mode=room.settings.gameplay_mode,
                     level=Level(state.get("selected_level", Level.NARROW.value)),
                     trap_answer=state.get("trap_answer"),
                     language=room.settings.language,

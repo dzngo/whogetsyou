@@ -92,7 +92,6 @@ class LLMService:
         level: Level,
         trap_answer: Optional[str] = None,
         num_distractors: int = 2,
-        *,
         language: str = "en",
     ) -> llm_prompts.MultipleChoiceResponse:
         messages = [
