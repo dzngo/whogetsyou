@@ -55,10 +55,6 @@ def show_room_summary(room: Room) -> None:
     st.write(f"**Language:** {language_display}")
     llm_display = SUPPORTED_LLM_MODELS.get(settings.llm_model, settings.llm_model)
     st.write(f"**LLM:** {llm_display}")
-    st.markdown("**Players:**")
-    for player in room.players:
-        role = "Host" if player.role.value == "host" else "Player"
-        st.write(f"- {player.name} ({role})")
 
 
 def style_buttons() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from services.room_service import RoomAlreadyStartedError, RoomService
 from ui import common
@@ -111,6 +112,8 @@ class JoinFlow:
             st.session_state["route"] = "game"
             common.rerun()
             return
+        # Auto-refresh while waiting for the host to start the game.
+        st_autorefresh(interval=1000, key=f"join_lobby_autorefresh_{room.room_code}")
         st.write(f"**Room name:** {room.name}")
         st.write(f"**Room code:** `{room.room_code}`")
         settings = room.settings

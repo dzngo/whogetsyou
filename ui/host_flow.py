@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from models import (
     SUPPORTED_LLM_MODELS,
@@ -331,6 +332,10 @@ class HostFlow:
             self.reset()
             common.rerun()
             return
+
+        # Auto-refresh while waiting in the lobby so players and settings stay in sync.
+        st_autorefresh(interval=1000, key=f"host_lobby_autorefresh_{room.room_code}")
+
         st.session_state["player_profile"] = {
             "player_id": room.host_id,
             "room_code": room.room_code,
@@ -342,28 +347,33 @@ class HostFlow:
             suffix = " (Host)" if player.role.value == "host" else ""
             st.write(f"- {player.name}{suffix}")
 
-        with st.form("gameplay_mode_form"):
+        st.markdown("### Game settings")
+        col_mode, col_score = st.columns(2)
+        with col_mode:
             selected_mode = st.radio(
                 "Gameplay mode",
                 options=[GameplayMode.SIMPLE.value, GameplayMode.BLUFFING.value],
                 format_func=lambda value: value.title(),
                 index=0 if room.settings.gameplay_mode == GameplayMode.SIMPLE else 1,
+                key="host_lobby_gameplay_mode",
             )
-            submitted = st.form_submit_button("Update gameplay mode")
-        if submitted and selected_mode != room.settings.gameplay_mode.value:
-            self.room_service.adjust_gameplay_mode(room, GameplayMode(selected_mode))
-            common.rerun()
-
-        with st.form("max_score_form"):
+        with col_score:
             score = st.number_input(
                 "Max score",
                 min_value=1,
                 value=int(room.settings.max_score),
+                key="host_lobby_max_score",
             )
-            score_submit = st.form_submit_button("Update max score")
-        if score_submit and score != room.settings.max_score:
+
+        if selected_mode != room.settings.gameplay_mode.value:
+            self.room_service.adjust_gameplay_mode(room, GameplayMode(selected_mode))
+            common.rerun()
+            return
+
+        if int(score) != room.settings.max_score:
             self.room_service.update_max_score(room, int(score))
             common.rerun()
+            return
 
         removable_players = [player for player in room.players if player.role != PlayerRole.HOST]
         if removable_players:

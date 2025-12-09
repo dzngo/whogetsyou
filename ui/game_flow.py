@@ -7,6 +7,7 @@ import random
 from typing import Dict, List, Optional
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from models import (
     DEFAULT_THEMES,
@@ -63,6 +64,28 @@ class GameFlow:
         is_host = current_player_id == room.host_id
         storyteller_id = self._current_storyteller_id(state)
         storyteller = self._player_lookup(room).get(storyteller_id)
+
+        phase = state.get("phase")
+        is_storyteller = current_player_id == storyteller_id
+        guesses = state.get("listener_guesses", {})
+        is_listener = current_player_id and current_player_id != storyteller_id
+        listener_has_guessed = bool(is_listener and current_player_id in guesses)
+        waiting_phases = {
+            "theme_selection",
+            "level_selection",
+            "question_generation",
+            "answer_entry",
+            "options",
+            "reveal",
+        }
+        # Listeners auto-refresh during waiting phases, and after they have submitted a guess.
+        if (not is_storyteller and phase in waiting_phases) or (
+            not is_storyteller and phase == "guessing" and listener_has_guessed
+        ):
+            st_autorefresh(interval=1000, key=f"game_auto_refresh_wait_{room.room_code}")
+        # Storyteller auto-refreshes during guessing to see incoming choices
+        if is_storyteller and phase == "guessing":
+            st_autorefresh(interval=1000, key=f"game_auto_refresh_guess_{room.room_code}")
 
         self._render_board(
             room,
@@ -183,7 +206,7 @@ class GameFlow:
             "results": "Final results.",
         }
         st.info(
-            f"**Round {state.get('round', 1)}** – Current Storyteller: {storyteller_name}  \n"
+            f"**Round {state.get('round', 1)}** – Current Storyteller: **{storyteller_name}**  \n"
             f"{phase_labels.get(state.get('phase'), '')}"
         )
 
@@ -429,7 +452,7 @@ class GameFlow:
         options = multiple_choice.get("options", [])
 
         if not can_act:
-            st.info("Waiting for the Storyteller to confirm the options.")
+            st.info("Waiting for the Storyteller to confirm the multiple choices options.")
             return
 
         if not options and state.get("true_answer"):
@@ -515,26 +538,35 @@ class GameFlow:
             st.write(f"{option['label']}. {option['text']}")
 
         option_labels = [opt["label"] for opt in options]
+        # Listener view
         if current_player_id and current_player_id in {player.player_id for player in listeners}:
-            current_guess = guesses.get(current_player_id, {}).get("label")
-            default_index = 0
-            if current_guess in option_labels:
-                default_index = option_labels.index(current_guess)
-            selection = st.selectbox(
-                "Your guess",
-                options=option_labels,
-                index=default_index,
-                key=f"{room.room_code}_guess_select",
-            )
-            if st.button("Submit my guess"):
-                guesses[current_player_id] = {
-                    "label": selection,
-                    "kind": lookup.get(selection, {}).get("kind"),
-                }
-                state["listener_guesses"] = guesses
-                self._save_state(room, state)
-                st.success("Guess submitted.")
+            if current_player_id in guesses:
+                # Waiting screen after this listener has submitted
+                my_guess = guesses[current_player_id]
+                chosen_label = my_guess.get("label")
+                chosen_option = lookup.get(chosen_label, {})
+                st.markdown("**Your choice**")
+                st.write(f"{chosen_label}. {chosen_option.get('text', '')}")
+                st.info("Waiting for the other players to finish their guesses…")
+            else:
+                # Initial guess input
+                default_index = 0
+                selection = st.selectbox(
+                    "Your guess",
+                    options=option_labels,
+                    index=default_index,
+                    key=f"{room.room_code}_guess_select",
+                )
+                if st.button("Submit my guess"):
+                    guesses[current_player_id] = {
+                        "label": selection,
+                        "kind": lookup.get(selection, {}).get("kind"),
+                    }
+                    state["listener_guesses"] = guesses
+                    self._save_state(room, state)
+                    st.success("Guess submitted.")
         else:
+            # Storyteller / host / observers
             st.info("Waiting for listeners to submit their guesses.")
 
         remaining = [p.name for p in listeners if p.player_id not in guesses]
@@ -560,9 +592,27 @@ class GameFlow:
         st.subheader("Reveal & scoring")
         question = (state.get("question") or {}).get("question", "")
         st.markdown(f"**Question:** {question}")
-        st.write(f"**True answer:** {state.get('true_answer')}")
-        if state.get("trap_answer"):
-            st.write(f"**Trap answer:** {state.get('trap_answer')}")
+
+        options = (state.get("multiple_choice") or {}).get("options", [])
+        if options:
+            st.markdown("**Options**")
+            for opt in options:
+                label = opt.get("label")
+                text = opt.get("text", "")
+                kind = opt.get("kind")
+                line = f"{label}. {text}"
+                if kind == "true":
+                    st.markdown(
+                        f"<span style='color:green; font-weight:bold'>{line}</span>",
+                        unsafe_allow_html=True,
+                    )
+                elif kind == "trap":
+                    st.markdown(
+                        f"<span style='color:red; font-weight:bold'>{line}</span>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.write(line)
 
         if not state.get("round_summary"):
             summary = self._compute_scoring(room, state, storyteller_id)
@@ -574,13 +624,24 @@ class GameFlow:
         guesses = summary.get("guesses", {})
         lookup = self._player_lookup(room)
         st.markdown("**Listener guesses**")
+        label_to_players: Dict[str, List[str]] = {}
         for player_id, guess in guesses.items():
             player = lookup.get(player_id)
             if not player:
                 continue
             label = guess.get("label")
-            kind = guess.get("kind")
-            st.write(f"- {player.name}: option {label} ({kind})")
+            if not label:
+                continue
+            label_to_players.setdefault(label, []).append(player.name)
+        if not label_to_players:
+            st.write("No guesses recorded.")
+        else:
+            for opt in options:
+                label = opt.get("label")
+                names = label_to_players.get(label)
+                if not names:
+                    continue
+                st.write(f"- Option {label}: {', '.join(names)}")
 
         deltas = summary.get("deltas", {})
         st.markdown("**Points this round**")
@@ -594,6 +655,10 @@ class GameFlow:
             st.success("We have a winner!")
             state["phase"] = "results"
             state["winners"] = summary["winners"]
+            state["end_reason"] = (
+                f"Game ended automatically because at least one player reached the target score "
+                f"of {room.settings.max_score}."
+            )
             self._save_state(room, state)
             return
 
@@ -605,6 +670,10 @@ class GameFlow:
     def _render_results(self, room: Room, state: Dict[str, object], is_host: bool) -> None:
         st.subheader("Final results")
         lookup = self._player_lookup(room)
+        reason = state.get("end_reason")
+        if reason:
+            st.info(reason)
+
         winners = state.get("winners", [])
         if winners:
             names = ", ".join(lookup[pid].name for pid in winners if pid in lookup)
@@ -767,6 +836,7 @@ class GameFlow:
         state["phase"] = "results"
         state["winners"] = winners
         if manual:
+            state["end_reason"] = "Game ended by the host."
             st.success("Game ended by host.")
         self._save_state(room, state)
 
