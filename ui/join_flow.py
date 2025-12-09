@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Dict
 
 import streamlit as st
@@ -22,6 +23,7 @@ class JoinFlow:
         return {
             "step": "player_name",
             "player_name": "",
+            "player_email": "",
             "player_id": None,
             "room_code_input": "",
             "joined_room_code": None,
@@ -50,15 +52,31 @@ class JoinFlow:
     def _render_player_name(self) -> None:
         state = self.state
         st.subheader("Player name")
+        profile = st.session_state.get("user_profile")
+        if profile:
+            state["player_name"] = profile["name"]
+            state["player_email"] = profile["email"]
+            st.info(f"Signed in as **{profile['name']}** ({profile['email']})")
+            with st.spinner("Signing in..."):
+                time.sleep(1)
+                state["step"] = "room_code"
+                common.rerun()
+            return
         name = st.text_input("Your name", value=state["player_name"])
+        email = st.text_input("Email", value=state["player_email"])
         if st.button("Next", key="join_name_next"):
             cleaned = name.strip()
             if not cleaned:
                 st.error("Please enter your name.")
-            else:
-                state["player_name"] = cleaned
-                state["step"] = "room_code"
-                common.rerun()
+                return
+            email_clean = email.strip().lower()
+            if not email_clean:
+                st.error("Please enter your email.")
+                return
+            state["player_name"] = cleaned
+            state["player_email"] = email_clean
+            state["step"] = "room_code"
+            common.rerun()
 
     def _render_room_code(self) -> None:
         state = self.state
@@ -81,8 +99,13 @@ class JoinFlow:
             if room.started:
                 self._game_already_started()
                 return
+            profile = st.session_state.get("user_profile")
+            player_email = profile.get("email") if profile else state.get("player_email")
+            if not player_email:
+                st.error("Email not found. Please go back and enter your email.")
+                return
             try:
-                player = self.room_service.add_player(room, state["player_name"])
+                player = self.room_service.add_player(room, state["player_name"], player_email)
             except RoomAlreadyStartedError:
                 self._game_already_started()
                 return
@@ -93,6 +116,7 @@ class JoinFlow:
                 "player_id": player.player_id,
                 "room_code": room.room_code,
                 "name": player.name,
+                "email": player.email,
             }
             common.rerun()
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Dict, Optional
 
 import streamlit as st
@@ -42,6 +43,7 @@ class HostFlow:
         return {
             "step": "host_name",
             "host_name": "",
+            "host_email": "",
             "room_name": "",
             "room_code": None,
             "existing_room_code": None,
@@ -87,15 +89,31 @@ class HostFlow:
     def _render_host_name(self) -> None:
         state = self.state
         st.subheader("Host name")
+        profile = st.session_state.get("user_profile")
+        if profile:
+            state["host_name"] = profile["name"]
+            state["host_email"] = profile["email"]
+            st.info(f"Signed in as **{profile['name']}** ({profile['email']})")
+            with st.spinner("Signing in..."):
+                time.sleep(1)
+                state["step"] = "room_name"
+                common.rerun()
+            return
         name = st.text_input("Your name", value=state["host_name"])
+        email = st.text_input("Email", value=state["host_email"])
         if st.button("Next", key="host_name_next"):
             cleaned = name.strip()
             if not cleaned:
                 st.error("Please enter your name.")
-            else:
-                state["host_name"] = cleaned
-                state["step"] = "room_name"
-                common.rerun()
+                return
+            email_clean = email.strip().lower()
+            if not email_clean:
+                st.error("Please enter your email.")
+                return
+            state["host_name"] = cleaned
+            state["host_email"] = email_clean
+            state["step"] = "room_name"
+            common.rerun()
 
     def _render_room_name(self) -> None:
         state = self.state
@@ -131,11 +149,16 @@ class HostFlow:
             state["step"] = "theme_mode"
             common.rerun()
             return
-        st.success("A room with this name/code already exists.")
+        st.success("A room with this name already exists.")
         common.show_room_summary(room)
         col1, col2, col3 = st.columns(3)
+        profile = st.session_state.get("user_profile") or {}
         if col1.button("Reuse room", key="existing_reuse"):
-            updated = self.room_service.reuse_room(room, state["host_name"])
+            updated = self.room_service.reuse_room(
+                room,
+                profile.get("name", state["host_name"]),
+                profile.get("email", state["host_email"]),
+            )
             state["room_code"] = updated.room_code
             state["step"] = "lobby"
             common.rerun()
@@ -303,6 +326,7 @@ class HostFlow:
             common.rerun()
         if col2.button("Next", key="language_next"):
             settings = self._build_room_settings(state)
+            profile = st.session_state.get("user_profile") or {}
             try:
                 if state["editing_existing"] and state["existing_room_code"]:
                     room = self._get_existing_room()
@@ -311,10 +335,20 @@ class HostFlow:
                         state["step"] = "room_name"
                         common.rerun()
                         return
-                    updated = self.room_service.reconfigure_room(room, state["host_name"], settings)
+                    updated = self.room_service.reconfigure_room(
+                        room,
+                        profile.get("name", state["host_name"]),
+                        profile.get("email", state.get("host_email", "")),
+                        settings,
+                    )
                     state["room_code"] = updated.room_code
                 else:
-                    room = self.room_service.create_room(state["host_name"], state["room_name"], settings)
+                    room = self.room_service.create_room(
+                        profile.get("name", state["host_name"]),
+                        profile.get("email", state.get("host_email", "")),
+                        state["room_name"],
+                        settings,
+                    )
                     state["room_code"] = room.room_code
             except InvalidRoomSettingsError as exc:
                 st.error(str(exc))
@@ -335,10 +369,12 @@ class HostFlow:
         # Auto-refresh while waiting in the lobby so players and settings stay in sync.
         st_autorefresh(interval=1000, key=f"host_lobby_autorefresh_{room.room_code}")
 
+        host_player = next((player for player in room.players if player.player_id == room.host_id), None)
         st.session_state["player_profile"] = {
             "player_id": room.host_id,
             "room_code": room.room_code,
             "name": room.host_name,
+            "email": host_player.email if host_player else "",
         }
         common.show_room_summary(room, display_llm=True)
         st.markdown("### Connected players")

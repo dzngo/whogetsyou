@@ -94,7 +94,7 @@ def style_buttons() -> None:
                 label.includes('change settings')
               ) {
                 bg = confirmColor;
-              } else if (label.includes('next') || label.includes('refresh') || label.includes('create')) {
+              } else if (label.includes('next') || label.includes('refresh') || label.includes('create room')) {
                 bg = positiveColor;
               } else if (
                 label.includes('suggest') ||

@@ -6,7 +6,7 @@ import random
 import string
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from models import (
     GameplayMode,
@@ -52,11 +52,11 @@ class RoomService:
             return None
         return self.repository.get_by_name(name)
 
-    def create_room(self, host_name: str, room_name: str, settings: RoomSettings) -> Room:
+    def create_room(self, host_name: str, host_email: str, room_name: str, settings: RoomSettings) -> Room:
         """Creates a completely new room with the provided configuration."""
         self._validate_settings(settings)
         now = datetime.utcnow()
-        host_player = self._build_player(host_name, PlayerRole.HOST)
+        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
         room = Room(
             room_code=self._generate_room_code(),
             name=room_name.strip(),
@@ -71,9 +71,9 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reuse_room(self, room: Room, host_name: str) -> Room:
+    def reuse_room(self, room: Room, host_name: str, host_email: str) -> Room:
         """Resets players for an existing room while keeping configuration."""
-        host_player = self._build_player(host_name, PlayerRole.HOST)
+        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
         room.host_id = host_player.player_id
         room.host_name = host_player.name
         room.players = [host_player]
@@ -82,10 +82,10 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reconfigure_room(self, room: Room, host_name: str, settings: RoomSettings) -> Room:
+    def reconfigure_room(self, room: Room, host_name: str, host_email: str, settings: RoomSettings) -> Room:
         """Keeps the room code/name but overwrites settings."""
         self._validate_settings(settings)
-        host_player = self._build_player(host_name, PlayerRole.HOST)
+        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
         room.host_id = host_player.player_id
         room.host_name = host_player.name
         room.players = [host_player]
@@ -95,11 +95,19 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def add_player(self, room: Room, player_name: str) -> Player:
+    def add_player(self, room: Room, player_name: str, player_email: str) -> Player:
         """Adds a listener to a room if the game hasn't started."""
         if room.started:
             raise RoomAlreadyStartedError(f"Room {room.room_code} has already started the game.")
-        player = self._build_player(player_name, PlayerRole.JOINER)
+        normalized_email = player_email.strip().lower()
+        for existing in room.players:
+            if existing.email.strip().lower() == normalized_email:
+                existing.name = player_name.strip() or existing.name
+                existing.is_connected = True
+                room.update_timestamp()
+                self.repository.save(room)
+                return existing
+        player = self._build_player(player_name, player_email, PlayerRole.JOINER)
         room.players.append(player)
         room.update_timestamp()
         self.repository.save(room)
@@ -136,13 +144,17 @@ class RoomService:
             if not self.repository.get_by_code(code):
                 return code
 
-    def _build_player(self, name: str, role: PlayerRole) -> Player:
+    def _build_player(self, name: str, email: str, role: PlayerRole) -> Player:
         cleaned = name.strip()
+        cleaned_email = email.strip().lower()
         if not cleaned:
             raise ValueError("Player name cannot be empty.")
+        if not cleaned_email:
+            raise ValueError("Email is required.")
         return Player(
             player_id=str(uuid.uuid4()),
             name=cleaned,
+            email=cleaned_email,
             role=role,
             joined_at=datetime.utcnow(),
         )
@@ -154,3 +166,17 @@ class RoomService:
             raise InvalidRoomSettingsError("A specific level is required when level mode is static.")
         if settings.max_score < 1:
             raise InvalidRoomSettingsError("Max score must be greater than zero.")
+
+    def list_rooms(self) -> List[Room]:
+        return self.repository.list_rooms()
+
+    def find_player_memberships(self, email: str) -> List[Tuple[Room, Player]]:
+        normalized = email.strip().lower()
+        if not normalized:
+            return []
+        matches: List[Tuple[Room, Player]] = []
+        for room in self.list_rooms():
+            for player in room.players:
+                if player.email.strip().lower() == normalized:
+                    matches.append((room, player))
+        return matches

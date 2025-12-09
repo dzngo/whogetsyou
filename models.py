@@ -88,6 +88,7 @@ def _iso_to_datetime(value: str) -> datetime:
 class Player:
     player_id: str
     name: str
+    email: str
     role: PlayerRole
     joined_at: datetime
     is_connected: bool = True
@@ -96,6 +97,7 @@ class Player:
         return {
             "player_id": self.player_id,
             "name": self.name,
+            "email": self.email,
             "role": self.role.value,
             "joined_at": self.joined_at.isoformat(),
             "is_connected": self.is_connected,
@@ -106,6 +108,7 @@ class Player:
         return cls(
             player_id=data["player_id"],
             name=data["name"],
+            email=data.get("email", ""),
             role=PlayerRole(data["role"]),
             joined_at=_iso_to_datetime(data["joined_at"]),
             is_connected=data.get("is_connected", True),
@@ -192,4 +195,26 @@ class Room:
             players=[Player.from_dict(player_data) for player_data in data.get("players", [])],
             settings=RoomSettings.from_dict(data["settings"]),
             game_state=dict(data.get("game_state", {})),
+        )
+
+
+@dataclass
+class UserAccount:
+    email: str
+    name: str
+    created_at: datetime
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "email": self.email,
+            "name": self.name,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, str]) -> "UserAccount":
+        return cls(
+            email=data["email"],
+            name=data["name"],
+            created_at=_iso_to_datetime(data["created_at"]),
         )

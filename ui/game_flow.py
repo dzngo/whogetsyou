@@ -11,8 +11,6 @@ from streamlit_autorefresh import st_autorefresh
 
 from models import (
     DEFAULT_THEMES,
-    LANGUAGE_FLAGS,
-    SUPPORTED_LANGUAGES,
     GameplayMode,
     Level,
     LevelMode,
@@ -428,7 +426,7 @@ class GameFlow:
         question = (state.get("question") or {}).get("question", "")
         if question:
             st.markdown(f"**Question:** {question}")
-        
+
         multiple_choice = state.get("multiple_choice") or {}
         options = multiple_choice.get("options", [])
 

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
+from typing import Dict, Optional
+
 import streamlit as st
 from textwrap import dedent
 
 from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import RoomService
+from services.user_service import UserAccount, UserService
 from ui import common
 from ui.game_flow import GameFlow
 from ui.host_flow import HostFlow
@@ -62,6 +66,7 @@ class Router:
         self.room_service = RoomService()
         self.game_service = GameService(self.room_service)
         self.llm_service = LLMService()
+        self.user_service = UserService()
         self.game_flow = GameFlow(self.room_service, self.game_service, self.llm_service)
         self.host_flow = HostFlow(self.room_service, self.llm_service, self.game_service)
         self.join_flow = JoinFlow(self.room_service)
@@ -73,6 +78,8 @@ class Router:
         title = "Who Gets You? 🎭 "
         st.title(title)
         common.style_buttons()
+        if not self._ensure_identity():
+            return
         if route == "entry":
             self._render_entry()
         elif route == "host":
@@ -88,6 +95,9 @@ class Router:
 
     def _render_entry(self) -> None:
         st.subheader("Welcome")
+        profile = st.session_state.get("user_profile")
+        if profile:
+            st.caption(f"Signed in as **{profile['name']}** ({profile['email']})")
         st.write("Start by choosing whether you want to host a room or join an existing game.")
         col1, col2 = st.columns(2)
         if col1.button("Create room", key="entry_create"):
@@ -95,6 +105,11 @@ class Router:
             common.rerun()
         if col2.button("Join room", key="entry_join"):
             st.session_state["route"] = "join"
+            common.rerun()
+        if st.button("Switch account", key="entry_switch_account"):
+            for key in ("user_profile", "player_profile", "active_room_code", "identity_conflict", "identity_resume_checked"):
+                st.session_state.pop(key, None)
+            st.session_state["route"] = "entry"
             common.rerun()
         show_rules = st.session_state.get("show_rules_panel", False)
         if st.button("View game rules", key="entry_rules"):
@@ -119,6 +134,116 @@ class Router:
         if current_model == target_model:
             return
         self.game_flow.llm_service = LLMService(llm_name=target_model)
+
+    def _ensure_identity(self) -> bool:
+        profile = st.session_state.get("user_profile")
+        if profile:
+            if not st.session_state.get("identity_resume_checked"):
+                self._attempt_auto_resume()
+            return True
+
+        st.subheader("Identify yourself")
+        st.write("Connect with your email to resume games or create a new account if this is your first time.")
+        tab_connect, tab_create = st.tabs(["Connect", "Create account"])
+
+        with tab_connect:
+            with st.form("identity_connect_form"):
+                email = st.text_input("Email", key="identity_connect_email")
+                submitted = st.form_submit_button("Connect")
+            if submitted:
+                account = self.user_service.get(email)
+                if not account:
+                    st.error("No account found with that email. Please create one.")
+                else:
+                    self._complete_identity(account)
+                    return False
+
+        with tab_create:
+            with st.form("identity_create_form"):
+                email_new = st.text_input("Email", key="identity_create_email")
+                name_new = st.text_input("Display name", key="identity_create_name")
+                submitted_new = st.form_submit_button("Create account")
+            if submitted_new:
+                email_clean = email_new.strip().lower()
+                name_clean = name_new.strip()
+                if not email_clean or not name_clean:
+                    st.error("Please enter both email and name.")
+                elif not self._is_valid_email(email_clean):
+                    st.error("Please enter a valid email address (example: name@example.com).")
+                else:
+                    existing = self.user_service.get(email_clean)
+                    if existing:
+                        st.warning(
+                            f"{email_clean} is already associated with **{existing.name}**. "
+                            "If this is you, confirm below."
+                        )
+                        st.session_state["identity_conflict"] = existing.to_dict()
+                    else:
+                        account = self.user_service.create(email_clean, name_clean)
+                        self._complete_identity(account)
+                        return False
+            conflict = st.session_state.get("identity_conflict")
+            expected_email = email_new.strip().lower()
+            if conflict and conflict.get("email", "").lower() != expected_email:
+                conflict = None
+            if conflict:
+                st.info(
+                    f"This email is currently used by **{conflict['name']}**. "
+                    "If that's you, confirm to continue."
+                )
+                col_confirm, col_cancel = st.columns(2)
+                if col_confirm.button("Yes, that's me", key="identity_claim_existing"):
+                    account = UserAccount.from_dict(conflict)
+                    self._complete_identity(account)
+                    return False
+                if col_cancel.button("Not me", key="identity_conflict_cancel"):
+                    st.session_state.pop("identity_conflict", None)
+
+        return False
+
+    @staticmethod
+    def _is_valid_email(value: str) -> bool:
+        return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value))
+
+    def _complete_identity(self, account: UserAccount) -> None:
+        st.session_state["user_profile"] = {
+            "email": account.email,
+            "name": account.name,
+        }
+        st.session_state.pop("identity_conflict", None)
+        st.session_state.pop("player_profile", None)
+        if not self._attempt_auto_resume(account):
+            common.rerun()
+
+    def _attempt_auto_resume(self, account: Optional[UserAccount | Dict[str, str]] = None) -> bool:
+        st.session_state["identity_resume_checked"] = True
+        data: Optional[Dict[str, str]] = None
+        if isinstance(account, UserAccount):
+            data = {"email": account.email, "name": account.name}
+        elif isinstance(account, dict):
+            data = account
+        else:
+            data = st.session_state.get("user_profile")
+        if not data:
+            return False
+        email = data.get("email", "").strip().lower()
+        if not email:
+            return False
+        for room, player in self.room_service.find_player_memberships(email):
+            if not room.started:
+                continue
+            st.session_state["player_profile"] = {
+                "player_id": player.player_id,
+                "room_code": room.room_code,
+                "name": player.name,
+                "email": player.email,
+            }
+            st.session_state["active_room_code"] = room.room_code
+            st.session_state["route"] = "game"
+            st.success("Welcome back! Reconnecting you to your game...")
+            common.rerun()
+            return True
+        return False
 
 
 def run() -> None:
