@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Dict
 
 import streamlit as st
@@ -21,7 +20,7 @@ class JoinFlow:
     @staticmethod
     def _default_state() -> Dict[str, object]:
         return {
-            "step": "player_name",
+            "step": "room_code",
             "player_name": "",
             "player_email": "",
             "player_id": None,
@@ -38,9 +37,7 @@ class JoinFlow:
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "player_name":
-            self._render_player_name()
-        elif step == "room_code":
+        if step == "room_code":
             self._render_room_code()
         elif step == "lobby":
             self._render_lobby()
@@ -49,42 +46,19 @@ class JoinFlow:
             self.reset()
             common.rerun()
 
-    def _render_player_name(self) -> None:
-        state = self.state
-        st.subheader("Player name")
-        profile = st.session_state.get("user_profile")
-        if profile:
-            state["player_name"] = profile["name"]
-            state["player_email"] = profile["email"]
-            st.info(f"Signed in as **{profile['name']}** ({profile['email']})")
-            with st.spinner("Signing in..."):
-                time.sleep(1)
-                state["step"] = "room_code"
-                common.rerun()
-            return
-        name = st.text_input("Your name", value=state["player_name"])
-        email = st.text_input("Email", value=state["player_email"])
-        if st.button("Next", key="join_name_next"):
-            cleaned = name.strip()
-            if not cleaned:
-                st.error("Please enter your name.")
-                return
-            email_clean = email.strip().lower()
-            if not email_clean:
-                st.error("Please enter your email.")
-                return
-            state["player_name"] = cleaned
-            state["player_email"] = email_clean
-            state["step"] = "room_code"
-            common.rerun()
-
     def _render_room_code(self) -> None:
         state = self.state
         st.subheader("Enter room code")
+        profile = st.session_state.get("user_profile") or {}
+        if profile:
+            state["player_name"] = profile["name"]
+            state["player_email"] = profile["email"]
+            st.caption(f"Signed in as **{profile['name']}** ({profile['email']})")
         room_code = st.text_input("Room code", value=state["room_code_input"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_code_back"):
-            state["step"] = "player_name"
+            self.reset()
+            st.session_state["route"] = "entry"
             common.rerun()
         if col2.button("Join room", key="room_code_next"):
             cleaned = room_code.strip().upper()

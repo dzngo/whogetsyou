@@ -83,7 +83,12 @@ def style_buttons() -> None:
               let bg = '';
               if (['end game', 'force reveal'].includes(label)) {
                 bg = warnColor;
-              } else if (label.includes('back') || label.includes('change room') || label.includes('return')) {
+              } else if (
+                label.includes('back') || 
+                label.includes('change room') || 
+                label.includes('return') ||
+                label.includes('switch account')
+              ) {
                 bg = dangerColor;
               } else if (
                 label.includes('confirm') || 

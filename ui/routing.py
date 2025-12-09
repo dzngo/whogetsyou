@@ -99,14 +99,14 @@ class Router:
         if profile:
             st.caption(f"Signed in as **{profile['name']}** ({profile['email']})")
         st.write("Start by choosing whether you want to host a room or join an existing game.")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         if col1.button("Create room", key="entry_create"):
             st.session_state["route"] = "host"
             common.rerun()
         if col2.button("Join room", key="entry_join"):
             st.session_state["route"] = "join"
             common.rerun()
-        if st.button("Switch account", key="entry_switch_account"):
+        if col3.button("Switch account", key="entry_switch_account"):
             for key in ("user_profile", "player_profile", "active_room_code", "identity_conflict", "identity_resume_checked"):
                 st.session_state.pop(key, None)
             st.session_state["route"] = "entry"

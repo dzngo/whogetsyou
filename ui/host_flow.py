@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Dict, Optional
 
 import streamlit as st
@@ -41,7 +40,7 @@ class HostFlow:
     @staticmethod
     def _default_state() -> Dict[str, object]:
         return {
-            "step": "host_name",
+            "step": "room_name",
             "host_name": "",
             "host_email": "",
             "room_name": "",
@@ -67,9 +66,7 @@ class HostFlow:
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "host_name":
-            self._render_host_name()
-        elif step == "room_name":
+        if step == "room_name":
             self._render_room_name()
         elif step == "existing_room_decision":
             self._render_existing_room_decision()
@@ -86,42 +83,19 @@ class HostFlow:
             self.reset()
             common.rerun()
 
-    def _render_host_name(self) -> None:
-        state = self.state
-        st.subheader("Host name")
-        profile = st.session_state.get("user_profile")
-        if profile:
-            state["host_name"] = profile["name"]
-            state["host_email"] = profile["email"]
-            st.info(f"Signed in as **{profile['name']}** ({profile['email']})")
-            with st.spinner("Signing in..."):
-                time.sleep(1)
-                state["step"] = "room_name"
-                common.rerun()
-            return
-        name = st.text_input("Your name", value=state["host_name"])
-        email = st.text_input("Email", value=state["host_email"])
-        if st.button("Next", key="host_name_next"):
-            cleaned = name.strip()
-            if not cleaned:
-                st.error("Please enter your name.")
-                return
-            email_clean = email.strip().lower()
-            if not email_clean:
-                st.error("Please enter your email.")
-                return
-            state["host_name"] = cleaned
-            state["host_email"] = email_clean
-            state["step"] = "room_name"
-            common.rerun()
-
     def _render_room_name(self) -> None:
         state = self.state
         st.subheader("Room name")
+        profile = st.session_state.get("user_profile") or {}
+        if profile:
+            state["host_name"] = profile.get("name", state["host_name"])
+            state["host_email"] = profile.get("email", state["host_email"])
+            st.caption(f"Signed in as **{profile.get('name', '')}** ({profile.get('email', '')})")
         name = st.text_input("Room name", value=state["room_name"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
-            state["step"] = "host_name"
+            self.reset()
+            st.session_state["route"] = "entry"
             common.rerun()
         if col2.button("Next", key="room_name_next"):
             cleaned = name.strip()
