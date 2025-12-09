@@ -206,6 +206,10 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
+        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if not can_act:
+            st.info("Waiting for the Storyteller to pick a theme...")
+            return
         st.subheader("Choose theme")
         if room.settings.theme_mode == ThemeMode.STATIC:
             theme = state.get("selected_theme") or (
@@ -216,11 +220,6 @@ class GameFlow:
             next_phase = "level_selection" if room.settings.level_mode == LevelMode.DYNAMIC else "question_generation"
             state["phase"] = next_phase
             self._save_state(room, state)
-            return
-
-        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
-        if not can_act:
-            st.info("Waiting for the Storyteller to pick a theme...")
             return
 
         options = sorted(set(DEFAULT_THEMES + room.settings.selected_themes))
@@ -251,18 +250,17 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Phase 1 – Choose level")
+        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if not can_act:
+            st.info("Waiting for the Storyteller to pick the depth level...")
+            return
+        st.subheader("Choose level")
         if room.settings.level_mode == LevelMode.STATIC:
             level = room.settings.selected_level.value if room.settings.selected_level else Level.SHALLOW.value
             st.info(f"Static level confirmed: **{level.title()}**")
             state["selected_level"] = level
             state["phase"] = "question_generation"
             self._save_state(room, state)
-            return
-
-        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
-        if not can_act:
-            st.info("Waiting for the Storyteller to pick the depth...")
             return
 
         level = st.selectbox(
@@ -283,9 +281,10 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Question proposal")
-        question_data = state.get("question") or {}
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if can_act:
+            st.subheader("Question proposal")
+        question_data = state.get("question") or {}
         if question_data:
             st.markdown(f"**Current question:** {question_data.get('question')}")
 
@@ -329,14 +328,15 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Storyteller answers")
+        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if can_act:
+            st.subheader("Storyteller answers")
         question = (state.get("question") or {}).get("question")
         if not question:
             st.warning("Question not set yet.")
             return
         st.markdown(f"**Question:** {question}")
 
-        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if not can_act:
             st.info("Waiting for the Storyteller to confirm their answers...")
             return
@@ -422,11 +422,13 @@ class GameFlow:
         storyteller_id: Optional[str],
         current_player_id: Optional[str],
     ) -> None:
-        st.subheader("Build multiple choice options")
+        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        if can_act:
+            st.subheader("Build multiple choice options")
         question = (state.get("question") or {}).get("question", "")
         if question:
             st.markdown(f"**Question:** {question}")
-        can_act = self._storyteller_can_act(storyteller_id, current_player_id)
+        
         multiple_choice = state.get("multiple_choice") or {}
         options = multiple_choice.get("options", [])
 
@@ -521,6 +523,7 @@ class GameFlow:
             st.markdown("**Options**")
             for option in options:
                 st.write(f"{option['label']}. {option['text']}")
+
         # Listener view
         if current_player_id and current_player_id in {player.player_id for player in listeners}:
             if current_player_id in guesses:
