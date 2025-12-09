@@ -47,7 +47,7 @@ class GameFlow:
             st.warning("Room no longer exists.")
             return
         if not room.started or not room.game_state:
-            st.info("Waiting for the host to start the game.")
+            st.info("Waiting for the host to start the game...")
             if st.button("Back to entry"):
                 st.session_state["route"] = "entry"
                 common.rerun()
@@ -147,43 +147,33 @@ class GameFlow:
         current_player_name: Optional[str],
         is_host: bool,
     ) -> None:
-        st.subheader("Game board")
-        columns = st.columns(2)
-        with columns[0]:
-            st.write(f"**Room**: {room.name}")
-            st.write(f"**Gameplay mode**: {room.settings.gameplay_mode.value.title()}")
-            theme_desc = (
-                f"Static ({', '.join(room.settings.selected_themes)})"
-                if room.settings.theme_mode == ThemeMode.STATIC and room.settings.selected_themes
-                else room.settings.theme_mode.value.title()
-            )
-            st.write(f"**Theme mode**: {theme_desc}")
-        with columns[1]:
-            level_desc = (
-                f"Static ({room.settings.selected_level.value.title()})"
-                if room.settings.level_mode == LevelMode.STATIC and room.settings.selected_level
-                else room.settings.level_mode.value.title()
-            )
-            st.write(f"**Level mode**: {level_desc}")
-            st.write(f"**Target score**: {room.settings.max_score}")
-            language_name = SUPPORTED_LANGUAGES.get(room.settings.language.lower(), room.settings.language.upper())
-            flag = LANGUAGE_FLAGS.get(room.settings.language.lower(), "")
-            language_display = f"{flag} {language_name}".strip()
-            st.write(f"**Language**: {language_display}")
+        common.show_room_summary(room)
 
         st.markdown("### Scoreboard")
-        lookup = self._player_lookup(room)
-        scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
-        scoreboard.sort(key=lambda item: item[1], reverse=True)
-        for pid, score in scoreboard:
-            player = lookup.get(pid)
-            if not player:
-                continue
-            marker = "💬" if pid == self._current_storyteller_id(state) else ""
-            st.write(f"- {player.name}: **{score}** {marker}")
-
-        if current_player_name:
-            st.caption(f"You are playing as **{current_player_name}**")
+        with st.container(border=True):
+            lookup = self._player_lookup(room)
+            scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
+            scoreboard.sort(key=lambda item: item[1], reverse=True)
+            for pid, score in scoreboard:
+                player = lookup.get(pid)
+                if not player:
+                    continue
+                marker = "💬" if pid == self._current_storyteller_id(state) else ""
+                st.write(f"- {player.name}: **{score}** {marker}")
+        st.markdown(
+            """
+            <style>
+            div.stAlert {
+                text-align: center;
+            }
+            div.stAlert p {
+                text-align: center;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.info(f"You are playing as **{current_player_name}**")
 
         current_theme = state.get("selected_theme") or (
             "To be selected" if room.settings.theme_mode == ThemeMode.DYNAMIC else "Static rotation"
@@ -191,23 +181,12 @@ class GameFlow:
         current_level = state.get("selected_level") or (
             "To be selected" if room.settings.level_mode == LevelMode.DYNAMIC else "Static"
         )
-        st.write(f"**Current theme:** {current_theme}")
-        st.write(f"**Current level:** {current_level.title() if isinstance(current_level, str) else current_level}")
-
         storyteller_name = storyteller.name if storyteller else "Unknown"
-        phase_labels = {
-            "theme_selection": "Waiting for the storyteller to choose a theme.",
-            "level_selection": "Waiting for the storyteller to set the depth.",
-            "question_generation": "Storyteller is validating the question.",
-            "answer_entry": "Storyteller is entering their answers.",
-            "options": "Storyteller is preparing multiple choice options.",
-            "guessing": "Listeners are guessing the answer.",
-            "reveal": "Revealing the round outcome.",
-            "results": "Final results.",
-        }
         st.info(
-            f"**Round {state.get('round', 1)}** – Current Storyteller: **{storyteller_name}**  \n"
-            f"{phase_labels.get(state.get('phase'), '')}"
+            f"**Round {state.get('round', 1)}**:  \n"
+            f"Current Storyteller: **{storyteller_name}**  \n"
+            f"Current theme: **{current_theme}**  \n"
+            f"Current level: **{current_level.title() if isinstance(current_level, str) else current_level}**"
         )
 
         if st.button("Refresh game view", key=f"{room.room_code}_refresh_view"):
@@ -241,7 +220,7 @@ class GameFlow:
 
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if not can_act:
-            st.info("Waiting for the Storyteller to pick a theme.")
+            st.info("Waiting for the Storyteller to pick a theme...")
             return
 
         options = sorted(set(DEFAULT_THEMES + room.settings.selected_themes))
@@ -283,7 +262,7 @@ class GameFlow:
 
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if not can_act:
-            st.info("Waiting for the Storyteller to pick the depth.")
+            st.info("Waiting for the Storyteller to pick the depth...")
             return
 
         level = st.selectbox(
@@ -311,7 +290,7 @@ class GameFlow:
             st.markdown(f"**Current question:** {question_data.get('question')}")
 
         if not can_act:
-            st.info("Waiting for the Storyteller to validate a question.")
+            st.info("Waiting for the Storyteller to validate a question...")
             return
 
         manual_key = f"{room.room_code}_question_text"
@@ -359,7 +338,7 @@ class GameFlow:
 
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if not can_act:
-            st.info("Waiting for the Storyteller to confirm their answers.")
+            st.info("Waiting for the Storyteller to confirm their answers...")
             return
         true_key = f"{room.room_code}_true_answer"
         true_prefill_key = f"{true_key}_prefill"
@@ -452,7 +431,7 @@ class GameFlow:
         options = multiple_choice.get("options", [])
 
         if not can_act:
-            st.info("Waiting for the Storyteller to confirm the multiple choices options.")
+            st.info("Waiting for the Storyteller to confirm the multiple choices options...")
             return
 
         if not options and state.get("true_answer"):
@@ -547,7 +526,7 @@ class GameFlow:
                 chosen_option = lookup.get(chosen_label, {})
                 st.markdown("**Your choice**")
                 st.write(f"{chosen_label}. {chosen_option.get('text', '')}")
-                st.info("Waiting for the other players to finish their guesses…")
+                st.info("Waiting for the other players to finish their guesses...")
             else:
                 # Initial guess input
                 default_index = 0
@@ -567,7 +546,7 @@ class GameFlow:
                     st.success("Guess submitted.")
         else:
             # Storyteller / host / observers
-            st.info("Waiting for listeners to submit their guesses.")
+            st.info("Waiting for listeners to submit their guesses...")
 
         remaining = [p.name for p in listeners if p.player_id not in guesses]
         if remaining:
@@ -681,11 +660,12 @@ class GameFlow:
         scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
         scoreboard.sort(key=lambda item: item[1], reverse=True)
         st.markdown("### Final scoreboard")
-        for pid, score in scoreboard:
-            player = lookup.get(pid)
-            if not player:
-                continue
-            st.write(f"- {player.name}: **{score}**")
+        with st.container(border=True):
+            for pid, score in scoreboard:
+                player = lookup.get(pid)
+                if not player:
+                    continue
+                st.write(f"- {player.name}: **{score}**")
         if is_host:
             if st.button("Return to host lobby"):
                 self.game_service.end_game(room)

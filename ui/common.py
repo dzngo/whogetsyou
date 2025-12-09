@@ -34,27 +34,32 @@ def rerun() -> None:
         getattr(st, "experimental_rerun")()
 
 
-def show_room_summary(room: Room) -> None:
-    st.subheader("Room summary")
-    st.write(f"**Room name:** {room.name}")
-    st.write(f"**Room code:** `{room.room_code}`")
-    settings = room.settings
-    theme_desc = settings.theme_mode.value.title()
-    if settings.theme_mode.value == "static" and settings.selected_themes:
-        theme_desc += f" ({', '.join(settings.selected_themes)})"
-    level_desc = settings.level_mode.value.title()
-    if settings.level_mode.value == "static" and settings.selected_level:
-        level_desc += f" ({settings.selected_level.value.title()})"
-    st.write(f"**Gameplay mode:** {settings.gameplay_mode.value.title()}")
-    st.write(f"**Theme mode:** {theme_desc}")
-    st.write(f"**Level mode:** {level_desc}")
-    st.write(f"**Max score:** {settings.max_score}")
-    language_name = SUPPORTED_LANGUAGES.get(settings.language.lower(), settings.language.upper())
-    flag = LANGUAGE_FLAGS.get(settings.language.lower(), "")
-    language_display = f"{flag} {language_name}".strip()
-    st.write(f"**Language:** {language_display}")
-    llm_display = SUPPORTED_LLM_MODELS.get(settings.llm_model, settings.llm_model)
-    st.write(f"**LLM:** {llm_display}")
+def show_room_summary(room: Room, display_llm: bool = False) -> None:
+    st.markdown(f"### Room :blue-background[*{room.name}*]")
+    with st.container(border=True):
+        columns = st.columns(2)
+        with columns[0]:
+            st.write(f"**Room code:** `{room.room_code}`")
+            settings = room.settings
+            theme_desc = settings.theme_mode.value.title()
+            if settings.theme_mode.value == "static" and settings.selected_themes:
+                theme_desc += f" ({', '.join(settings.selected_themes)})"
+            level_desc = settings.level_mode.value.title()
+            if settings.level_mode.value == "static" and settings.selected_level:
+                level_desc += f" ({settings.selected_level.value.title()})"
+            st.write(f"**Max score:** {settings.max_score}")
+            language_name = SUPPORTED_LANGUAGES.get(settings.language.lower(), settings.language.upper())
+            flag = LANGUAGE_FLAGS.get(settings.language.lower(), "")
+            language_display = f"{flag} {language_name}".strip()
+            st.write(f"**Language:** {language_display}")
+            llm_display = SUPPORTED_LLM_MODELS.get(settings.llm_model, settings.llm_model)
+            if display_llm:
+                st.write(f"**Assistant:** {llm_display}")
+
+        with columns[1]:
+            st.write(f"**Theme mode:** {theme_desc}")
+            st.write(f"**Level mode:** {level_desc}")
+            st.write(f"**Gameplay mode:** {settings.gameplay_mode.value.title()}")
 
 
 def style_buttons() -> None:

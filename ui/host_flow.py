@@ -325,7 +325,6 @@ class HostFlow:
 
     def _render_lobby(self) -> None:
         state = self.state
-        st.subheader("Room lobby (Host)")
         room = self._load_room(state["room_code"])
         if not room:
             st.warning("Room could not be found. Let's start again.")
@@ -341,59 +340,60 @@ class HostFlow:
             "room_code": room.room_code,
             "name": room.host_name,
         }
-        common.show_room_summary(room)
+        common.show_room_summary(room, display_llm=True)
         st.markdown("### Connected players")
-        for player in room.players:
-            suffix = " (Host)" if player.role.value == "host" else ""
-            st.write(f"- {player.name}{suffix}")
+        with st.container(border=True):
+            for player in room.players:
+                suffix = " (Host)" if player.role.value == "host" else ""
+                st.write(f"- {player.name}{suffix}")
 
         st.markdown("### Game settings")
-        col_mode, col_score = st.columns(2)
-        with col_mode:
-            selected_mode = st.radio(
-                "Gameplay mode",
-                options=[GameplayMode.SIMPLE.value, GameplayMode.BLUFFING.value],
-                format_func=lambda value: value.title(),
-                index=0 if room.settings.gameplay_mode == GameplayMode.SIMPLE else 1,
-                key="host_lobby_gameplay_mode",
-            )
-        with col_score:
-            score = st.number_input(
-                "Max score",
-                min_value=1,
-                value=int(room.settings.max_score),
-                key="host_lobby_max_score",
-            )
-
-        if selected_mode != room.settings.gameplay_mode.value:
-            self.room_service.adjust_gameplay_mode(room, GameplayMode(selected_mode))
-            common.rerun()
-            return
-
-        if int(score) != room.settings.max_score:
-            self.room_service.update_max_score(room, int(score))
-            common.rerun()
-            return
-
-        removable_players = [player for player in room.players if player.role != PlayerRole.HOST]
-        if removable_players:
-            with st.form("remove_player_form"):
-                choices = {player.player_id: player for player in removable_players}
-                selected_id = st.selectbox(
-                    "Remove a player",
-                    options=list(choices.keys()),
-                    format_func=lambda pid: choices[pid].name,
-                    index=0,
+        with st.container(border=True):
+            col_mode, col_score = st.columns(2)
+            with col_mode:
+                selected_mode = st.radio(
+                    "Gameplay mode",
+                    options=[GameplayMode.SIMPLE.value, GameplayMode.BLUFFING.value],
+                    format_func=lambda value: value.title(),
+                    index=0 if room.settings.gameplay_mode == GameplayMode.SIMPLE else 1,
+                    key="host_lobby_gameplay_mode",
                 )
-                remove_submit = st.form_submit_button("Remove player")
-            if remove_submit and selected_id:
-                self.room_service.remove_player(room, selected_id)
-                st.success("Player removed from the room.")
-                common.rerun()
-        else:
-            st.caption("No players to remove.")
+            with col_score:
+                score = st.number_input(
+                    "Max score",
+                    min_value=1,
+                    value=int(room.settings.max_score),
+                    key="host_lobby_max_score",
+                )
 
-        st.markdown("### Game controls")
+            if selected_mode != room.settings.gameplay_mode.value:
+                self.room_service.adjust_gameplay_mode(room, GameplayMode(selected_mode))
+                common.rerun()
+                return
+
+            if int(score) != room.settings.max_score:
+                self.room_service.update_max_score(room, int(score))
+                common.rerun()
+                return
+
+            removable_players = [player for player in room.players if player.role != PlayerRole.HOST]
+            if removable_players:
+                with st.form("remove_player_form"):
+                    choices = {player.player_id: player for player in removable_players}
+                    selected_id = st.selectbox(
+                        "Remove a player",
+                        options=list(choices.keys()),
+                        format_func=lambda pid: choices[pid].name,
+                        index=0,
+                    )
+                    remove_submit = st.form_submit_button("Remove player")
+                if remove_submit and selected_id:
+                    self.room_service.remove_player(room, selected_id)
+                    st.success("Player removed from the room.")
+                    common.rerun()
+            else:
+                st.caption("No players to remove.")
+
         can_start = len(room.players) >= 2
         if not can_start:
             st.warning("At least two players are required to start the game.")

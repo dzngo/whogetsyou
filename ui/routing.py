@@ -70,7 +70,7 @@ class Router:
         if "route" not in st.session_state:
             st.session_state["route"] = "entry"
         route = st.session_state["route"]
-        title = "Who Gets You? 🎭 - In-game" if route == "game" else "Who Gets You? 🎭 - Pre-game"
+        title = "Who Gets You? 🎭 "
         st.title(title)
         common.style_buttons()
         if route == "entry":

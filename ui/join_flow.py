@@ -98,7 +98,6 @@ class JoinFlow:
 
     def _render_lobby(self) -> None:
         state = self.state
-        st.subheader("Room lobby (Player)")
         room = self._load_joined_room()
         if not room:
             st.warning("Room was closed by the host.")
@@ -114,23 +113,12 @@ class JoinFlow:
             return
         # Auto-refresh while waiting for the host to start the game.
         st_autorefresh(interval=1000, key=f"join_lobby_autorefresh_{room.room_code}")
-        st.write(f"**Room name:** {room.name}")
-        st.write(f"**Room code:** `{room.room_code}`")
-        settings = room.settings
-        st.write(f"**Gameplay mode:** {settings.gameplay_mode.value.title()}")
-        theme_desc = settings.theme_mode.value.title()
-        if settings.theme_mode.value == "static" and settings.selected_themes:
-            theme_desc += f" ({', '.join(settings.selected_themes)})"
-        st.write(f"**Theme mode:** {theme_desc}")
-        level_desc = settings.level_mode.value.title()
-        if settings.level_mode.value == "static" and settings.selected_level:
-            level_desc += f" ({settings.selected_level.value.title()})"
-        st.write(f"**Level mode:** {level_desc}")
-        st.write(f"**Max score:** {settings.max_score}")
-        st.markdown("### Joined players")
-        for player in room.players:
-            you = " (You)" if player.player_id == state["player_id"] else ""
-            st.write(f"- {player.name}{you}")
+        common.show_room_summary(room)
+        st.markdown("### Connected players")
+        with st.container(border=True):
+            for player in room.players:
+                you = " (You)" if player.player_id == state["player_id"] else ""
+                st.write(f"- {player.name}{you}")
         st.info("Waiting for host to start the game…")
         col1, col2 = st.columns(2)
         if col1.button("Refresh", key="join_lobby_refresh"):
