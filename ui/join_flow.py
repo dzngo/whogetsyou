@@ -113,7 +113,7 @@ class JoinFlow:
             return
         # Auto-refresh while waiting for the host to start the game.
         st_autorefresh(interval=1000, key=f"join_lobby_autorefresh_{room.room_code}")
-        common.show_room_summary(room)
+        common.show_room_summary(room, display_llm=False)
         st.markdown("### Connected players")
         with st.container(border=True):
             for player in room.players:

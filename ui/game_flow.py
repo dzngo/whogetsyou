@@ -512,15 +512,20 @@ class GameFlow:
         listeners = [player for player in room.players if player.player_id != storyteller_id]
         guesses = state.get("listener_guesses", {})
 
-        st.markdown("**Options**")
-        for option in options:
-            st.write(f"{option['label']}. {option['text']}")
+        option_display = [f"{opt['label']}. {opt['text']}" for opt in options]
+        display_to_label = {display: opt["label"] for display, opt in zip(option_display, options)}
 
         option_labels = [opt["label"] for opt in options]
+
+        def _show_option_list() -> None:
+            st.markdown("**Options**")
+            for option in options:
+                st.write(f"{option['label']}. {option['text']}")
         # Listener view
         if current_player_id and current_player_id in {player.player_id for player in listeners}:
             if current_player_id in guesses:
                 # Waiting screen after this listener has submitted
+                _show_option_list()
                 my_guess = guesses[current_player_id]
                 chosen_label = my_guess.get("label")
                 chosen_option = lookup.get(chosen_label, {})
@@ -530,12 +535,13 @@ class GameFlow:
             else:
                 # Initial guess input
                 default_index = 0
-                selection = st.selectbox(
-                    "Your guess",
-                    options=option_labels,
+                selection_display = st.radio(
+                    "Options",
+                    options=option_display,
                     index=default_index,
                     key=f"{room.room_code}_guess_select",
                 )
+                selection = display_to_label.get(selection_display, option_labels[default_index])
                 if st.button("Submit my guess"):
                     guesses[current_player_id] = {
                         "label": selection,
@@ -546,6 +552,7 @@ class GameFlow:
                     st.success("Guess submitted.")
         else:
             # Storyteller / host / observers
+            _show_option_list()
             st.info("Waiting for listeners to submit their guesses...")
 
         remaining = [p.name for p in listeners if p.player_id not in guesses]
