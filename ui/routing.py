@@ -107,7 +107,13 @@ class Router:
             st.session_state["route"] = "join"
             common.rerun()
         if col3.button("Switch account", key="entry_switch_account"):
-            for key in ("user_profile", "player_profile", "active_room_code", "identity_conflict", "identity_resume_checked"):
+            for key in (
+                "user_profile",
+                "player_profile",
+                "active_room_code",
+                "identity_conflict",
+                "identity_resume_checked",
+            ):
                 st.session_state.pop(key, None)
             st.session_state["route"] = "entry"
             common.rerun()
@@ -144,6 +150,7 @@ class Router:
 
         st.subheader("Identify yourself")
         st.write("Connect with your email to resume games or create a new account if this is your first time.")
+
         tab_connect, tab_create = st.tabs(["Connect", "Create account"])
 
         with tab_connect:
@@ -188,8 +195,7 @@ class Router:
                 conflict = None
             if conflict:
                 st.info(
-                    f"This email is currently used by **{conflict['name']}**. "
-                    "If that's you, confirm to continue."
+                    f"This email is currently used by **{conflict['name']}**. " "If that's you, confirm to continue."
                 )
                 col_confirm, col_cancel = st.columns(2)
                 if col_confirm.button("Yes, that's me", key="identity_claim_existing"):
@@ -198,6 +204,9 @@ class Router:
                     return False
                 if col_cancel.button("Not me", key="identity_conflict_cancel"):
                     st.session_state.pop("identity_conflict", None)
+
+        with st.expander(":arrow_down: Game rules", expanded=False):
+            st.markdown(self.RULES_SUMMARY)
 
         return False
 
