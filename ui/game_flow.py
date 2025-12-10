@@ -285,8 +285,9 @@ class GameFlow:
         current_theme = self._current_theme(room, state)
         current_level = self._current_level_value(room, state)
         question_data = state.get("question") or {}
-        if question_data:
-            st.markdown(f"**Current question:** {question_data.get('question')}")
+        with st.container(border=True):
+            if question_data:
+                st.markdown(f"**Current question:** {question_data.get('question')}")
 
         if not can_act:
             st.info("Waiting for the Storyteller to validate a question...")
@@ -355,7 +356,8 @@ class GameFlow:
         if not question:
             st.warning("Question not set yet.")
             return
-        st.markdown(f"**Question:** {question}")
+        with st.container(border=True):
+            st.markdown(f"**Question:** {question}")
 
         current_theme = self._current_theme(room, state)
         current_level = self._current_level_value(room, state)
@@ -493,7 +495,7 @@ class GameFlow:
         current_theme = self._current_theme(room, state)
         current_level = self._current_level_value(room, state)
         question = (state.get("question") or {}).get("question", "")
-        if question:
+        with st.container(border=True):
             st.markdown(f"**Question:** {question}")
 
         multiple_choice = state.get("multiple_choice") or {}
@@ -592,7 +594,7 @@ class GameFlow:
     ) -> None:
         st.subheader("Guessing")
         question = (state.get("question") or {}).get("question", "")
-        if question:
+        with st.container(border=True):
             st.markdown(f"**Question:** {question}")
         options = state.get("multiple_choice", {}).get("options", [])
         if not options:
@@ -608,9 +610,10 @@ class GameFlow:
         option_labels = [opt["label"] for opt in options]
 
         def _show_option_list() -> None:
-            st.markdown("**Options**")
-            for option in options:
-                st.write(f"{option['label']}. {option['text']}")
+            with st.container(border=True):
+                st.markdown("**Options**")
+                for option in options:
+                    st.write(f"{option['label']}. {option['text']}")
 
         # Listener view
         if current_player_id and current_player_id in {player.player_id for player in listeners}:
@@ -620,27 +623,29 @@ class GameFlow:
                 my_guess = guesses[current_player_id]
                 chosen_label = my_guess.get("label")
                 chosen_option = lookup.get(chosen_label, {})
-                st.markdown("**Your choice**")
-                st.write(f"{chosen_label}. {chosen_option.get('text', '')}")
+                with st.container(border=True):
+                    st.markdown("**Your choice**")
+                    st.write(f"{chosen_label}. {chosen_option.get('text', '')}")
                 st.info("Waiting for the other players to finish their guesses...")
             else:
                 # Initial guess input
                 default_index = 0
-                selection_display = st.radio(
-                    "Options",
-                    options=option_display,
-                    index=default_index,
-                    key=f"{room.room_code}_guess_select",
-                )
-                selection = display_to_label.get(selection_display, option_labels[default_index])
-                if st.button("Submit my guess"):
-                    guesses[current_player_id] = {
-                        "label": selection,
-                        "kind": lookup.get(selection, {}).get("kind"),
-                    }
-                    state["listener_guesses"] = guesses
-                    self._save_state(room, state)
-                    st.success("Guess submitted.")
+                with st.container(border=True):
+                    selection_display = st.radio(
+                        "Options",
+                        options=option_display,
+                        index=default_index,
+                        key=f"{room.room_code}_guess_select",
+                    )
+                    selection = display_to_label.get(selection_display, option_labels[default_index])
+                    if st.button("Submit my guess"):
+                        guesses[current_player_id] = {
+                            "label": selection,
+                            "kind": lookup.get(selection, {}).get("kind"),
+                        }
+                        state["listener_guesses"] = guesses
+                        self._save_state(room, state)
+                        st.success("Guess submitted.")
         else:
             # Storyteller / host / observers
             _show_option_list()
@@ -668,10 +673,11 @@ class GameFlow:
     ) -> None:
         st.subheader("Reveal & scoring")
         question = (state.get("question") or {}).get("question", "")
-        st.markdown(f"**Question:** {question}")
+        with st.container(border=True):
+            st.markdown(f"**Question:** {question}")
 
         options = (state.get("multiple_choice") or {}).get("options", [])
-        if options:
+        with st.container(border=True):
             st.markdown("**Options**")
             for opt in options:
                 label = opt.get("label")
@@ -700,33 +706,35 @@ class GameFlow:
 
         guesses = summary.get("guesses", {})
         lookup = self._player_lookup(room)
-        st.markdown("**Listener guesses**")
-        label_to_players: Dict[str, List[str]] = {}
-        for player_id, guess in guesses.items():
-            player = lookup.get(player_id)
-            if not player:
-                continue
-            label = guess.get("label")
-            if not label:
-                continue
-            label_to_players.setdefault(label, []).append(player.name)
-        if not label_to_players:
-            st.write("No guesses recorded.")
-        else:
-            for opt in options:
-                label = opt.get("label")
-                names = label_to_players.get(label)
-                if not names:
+        with st.container(border=True):
+            st.markdown("**Listener guesses**")
+            label_to_players: Dict[str, List[str]] = {}
+            for player_id, guess in guesses.items():
+                player = lookup.get(player_id)
+                if not player:
                     continue
-                st.write(f"- Option {label}: {', '.join(names)}")
+                label = guess.get("label")
+                if not label:
+                    continue
+                label_to_players.setdefault(label, []).append(player.name)
+            if not label_to_players:
+                st.write("No guesses recorded.")
+            else:
+                for opt in options:
+                    label = opt.get("label")
+                    names = label_to_players.get(label)
+                    if not names:
+                        continue
+                    st.write(f"- Option {label}: {', '.join(names)}")
 
         deltas = summary.get("deltas", {})
-        st.markdown("**Points this round**")
-        for pid, delta in deltas.items():
-            player = lookup.get(pid)
-            if not player or delta == 0:
-                continue
-            st.write(f"- {player.name}: +{delta}")
+        with st.container(border=True):
+            st.markdown("**Points this round**")
+            for pid, delta in deltas.items():
+                player = lookup.get(pid)
+                if not player or delta == 0:
+                    continue
+                st.write(f"- {player.name}: +{delta}")
 
         if summary.get("winners"):
             st.success("We have a winner!")
