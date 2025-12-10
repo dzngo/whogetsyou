@@ -37,13 +37,15 @@ class PlayerRole(str, Enum):
 
 
 DEFAULT_THEMES: List[str] = [
-    "Childhood",
-    "Travel",
-    "Work",
-    "Relationships",
-    "Hobbies",
-    "Family",
-    "Dreams",
+    "Yourself 🌱",
+    "Childhood 👶",
+    "Family 🏡",
+    "Goals ✨",
+    "Work 💼",
+    "Love 💖",
+    "Friends 🤝",
+    "Hobbies 🎨",
+    "Travel ✈️",
 ]
 
 SUPPORTED_LANGUAGES: Dict[str, str] = {

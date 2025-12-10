@@ -220,7 +220,7 @@ class GameFlow:
             self._save_state(room, state)
             return
 
-        options = sorted(set(DEFAULT_THEMES + room.settings.selected_themes))
+        options = DEFAULT_THEMES + room.settings.selected_themes
         selected = st.selectbox(
             "Select a theme",
             options=options,

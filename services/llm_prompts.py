@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Iterable, List
 
 from pydantic import BaseModel, Field
@@ -33,6 +34,31 @@ LEVEL_DESCRIPTIONS = {
     "deep": "Introspective and emotionally aware. Invites vulnerability, formative memories, or personal growth moments while staying respectful.",
 }
 
+QUESTION_VARIETY_FRAMES = [
+    "Spotlight a small turning point—the moment a path or belief changed—and ask what led to it.",
+    "Use a sensory hook (sound, smell, texture) to pull out a vivid memory or story.",
+    "Ask for the 'last time' they felt a specific emotion or vibe to ground responses in recent, concrete details.",
+    "Frame it as advice to a past or future self so the answer mixes hindsight with vulnerability.",
+    "Prompt them to offer advice to someone else facing the same situation, revealing their personal playbook.",
+    "Ask them to take a stance—what's their perspective or opinion on a nuanced part of the theme, and why?",
+    "Invite them to act as a mini expert—what's an unpopular or under-shared opinion they hold about the theme, and what experiences shaped it?",
+    "Use a 'what if' scenario: change one detail about the theme and ask how life might look different.",
+    "Ask about a part of their story they've rarely shared—what kept it hidden and why might it matter now?",
+    "Invite them to uncover a belief they once held quietly or secretly; what softened or strengthened it?",
+    "Prompt a 'never told' moment: a memory or insight they've carried privately that shaped how they show up today.",
+    "Explore a regret or near-miss that still tugs at them—what does it reveal about who they hoped to be?",
+    "Ask them to revisit a promise they couldn't keep and what that unfinished thread teaches them now.",
+]
+
+MEDIUM_VARIETY_FRAMES = [
+    "Ask them to share a short story about a memorable 'middle chapter'—not day-one, not the finale, but somewhere in between.",
+    "Use a gentle comparison: how did their approach to this theme change from five years ago to now?",
+    "Prompt a moment of advice to a close friend facing something similar, keeping it practical and heartfelt.",
+    "Encourage them to describe a routine, playlist, or environment they rely on when this theme pops up.",
+    "Ask for their opinion on a common assumption tied to the theme and how their experience affirms or challenges it.",
+    "Invite them to share a mild regret or do-over they'd accept if it helped someone else feel seen.",
+]
+
 SYSTEM_PROMPT = f"""You are the narrative director for the party game "Who Gets You?". \
 Use the rules below to keep questions, answers, and multiple-choice options safe, inclusive, and emotionally intelligent.
 {GAME_RULES_SUMMARY.strip()}
@@ -53,13 +79,27 @@ def _render_previous_questions(previous_questions: Iterable[str]) -> str:
 
 def build_question_prompt(theme: str, level: str, previous_questions: Iterable[str], language: str) -> str:
     language_name = _language_name(language)
+    if level.lower() == "shallow":
+        variety_frame = "Keep it light and welcoming; make it easy to answer."
+    elif level.lower() == "medium":
+        variety_frame = random.choice(MEDIUM_VARIETY_FRAMES)
+    else:
+        variety_frame = random.choice(QUESTION_VARIETY_FRAMES)
+    history_guardrail = (
+        "Treat the earlier questions below as off-limits source material—avoid reusing their structure or key phrases."
+        if previous_questions
+        else "Still, write something that feels fresh compared to typical conversation starters."
+    )
     return (
         f"Generate a single question for the theme '{theme}'.\n"
         f"Depth: {level.title()} — {LEVEL_DESCRIPTIONS.get(level, 'Keep it warm and sincere')}.\n"
         f"{_render_previous_questions(previous_questions)}\n"
+        f"{history_guardrail}\n"
+        f"Variety cue: {variety_frame}\n"
         f"Write the final question entirely in {language_name}.\n"
         "Requirements:\n"
         "- Make it open-ended and non-repetitive.\n"
+        "- Surprise the group with an angle they haven't already explored; reward novelty and unexpected hooks (within the comfort of the selected depth).\n"
         "- Keep it respectful and supportive; avoid cliches, yes/no questions, or anything that might trigger trauma.\n"
         "- Output JSON with 'question'."
     )
