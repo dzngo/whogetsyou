@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional
+import streamlit as st
 
 from models import Room
+
+
+@st.cache_resource(show_spinner=False)  # type: ignore[arg-type]
+def _shared_room_lock() -> Lock:
+    return Lock()
 
 
 class RoomRepository:
@@ -16,31 +23,37 @@ class RoomRepository:
         default_path = Path(__file__).resolve().parent / "rooms.json"
         self.storage_path = storage_path or default_path
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = _shared_room_lock()
 
     def list_rooms(self) -> List[Room]:
-        return list(self._load().values())
+        with self._lock:
+            return list(self._load().values())
 
     def get_by_code(self, room_code: str) -> Optional[Room]:
-        return self._load().get(room_code.upper())
+        with self._lock:
+            return self._load().get(room_code.upper())
 
     def get_by_name(self, name: str) -> Optional[Room]:
         normalized = name.strip().lower()
-        for room in self._load().values():
-            if room.name.strip().lower() == normalized:
-                return room
+        with self._lock:
+            for room in self._load().values():
+                if room.name.strip().lower() == normalized:
+                    return room
         return None
 
     def save(self, room: Room) -> None:
-        rooms = self._load()
-        rooms[room.room_code.upper()] = room
-        self._write(rooms)
+        with self._lock:
+            rooms = self._load()
+            rooms[room.room_code.upper()] = room
+            self._write(rooms)
 
     def delete(self, room_code: str) -> None:
-        rooms = self._load()
-        key = room_code.upper()
-        if key in rooms:
-            del rooms[key]
-            self._write(rooms)
+        with self._lock:
+            rooms = self._load()
+            key = room_code.upper()
+            if key in rooms:
+                del rooms[key]
+                self._write(rooms)
 
     def _load(self) -> Dict[str, Room]:
         if not self.storage_path.exists():
