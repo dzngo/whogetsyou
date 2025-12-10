@@ -280,18 +280,17 @@ class GameFlow:
         current_player_id: Optional[str],
     ) -> None:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
-        if can_act:
-            st.subheader("Question proposal")
+        if not can_act:
+            st.info("Waiting for the Storyteller to validate a question...")
+            return
+
+        st.subheader("Question proposal")
         current_theme = self._current_theme(room, state)
         current_level = self._current_level_value(room, state)
         question_data = state.get("question") or {}
         with st.container(border=True):
             if question_data:
                 st.markdown(f"**Current question:** {question_data.get('question')}")
-
-        if not can_act:
-            st.info("Waiting for the Storyteller to validate a question...")
-            return
 
         manual_key = f"{room.room_code}_question_text"
         prefill_key = f"{manual_key}_prefill"
@@ -351,7 +350,8 @@ class GameFlow:
         current_player_id: Optional[str],
     ) -> None:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
-        st.subheader("Storyteller answers")
+        if can_act:
+            st.subheader("Storyteller answers")
         question = (state.get("question") or {}).get("question")
         if not question:
             st.warning("Question not set yet.")
