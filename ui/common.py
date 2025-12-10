@@ -75,6 +75,7 @@ def style_buttons() -> None:
           const dangerColor = '#c52233';
           const confirmColor = '#1a73e8';
           const aiColor = '#ea8600';
+          const magicColor = '#a73ac9';
           const paint = () => {
             const buttons = root.querySelectorAll('button');
             buttons.forEach((btn) => {
@@ -107,6 +108,10 @@ def style_buttons() -> None:
                 label.includes('regenerate')
               ) {
                 bg = aiColor;
+              } else if (
+                label.includes('rephrase')
+              ) {
+                bg = magicColor;
               }
               if (bg) {
                 btn.style.backgroundColor = bg;

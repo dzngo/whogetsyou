@@ -119,8 +119,7 @@ def build_multiple_choice_prompt(
         f"Include exactly {num_distractors} additional distractors that sound natural.\n"
         "Avoid to be wordy.\n"
         "Label answers sequentially starting at A. Output JSON with:\n"
-        "- question (string)\n"
-        "- options (list of objects with 'label', 'text', 'kind' of 'true'|'trap'|'distractor', and optional 'hint')\n"
+        "- options (list of objects with 'label', 'text', 'kind' of 'true'|'trap'|'distractor')\n"
     )
 
 
@@ -155,6 +154,30 @@ def build_option_refine_prompt(
     )
 
 
+def build_rephrase_prompt(
+    kind: str,
+    text: str,
+    language: str,
+    question: str | None = None,
+    theme: str | None = None,
+    level: str | None = None,
+) -> str:
+    language_name = _language_name(language)
+    context = f"Reference question for context:\n{question}\n" if question else ""
+    theme_line = f"Theme: {theme}\n" if theme else ""
+    level_line = f"Depth level: {level}\n" if level else ""
+    return (
+        f"You are polishing a {kind} for the game 'Who Gets You?'.\n"
+        f"{context}"
+        f"{theme_line}"
+        f"{level_line}"
+        f"Original text:\n{text}\n"
+        f"Rewrite it in {language_name} so it keeps the same meaning but sounds clearer, more natural, and emotionally aware.\n"
+        "Keep the length similar, avoid adding new facts, and do not change first-person perspective if present.\n"
+        "Return only the rewritten text with no introductions or explanations."
+    )
+
+
 class QuestionLLMResponse(BaseModel):
     question: str = Field(..., description="The final question text delivered to the storyteller.")
 
@@ -164,14 +187,12 @@ class AnswerSuggestionResponse(BaseModel):
 
 
 class MultipleChoiceOption(BaseModel):
-    label: str = Field(..., description="Single-letter identifier such as A, B, C.")
+    label: str = Field(..., description="Single-letter identifier such as A, B, C, ...")
     text: str = Field(..., description="What the listeners read.")
     kind: Literal["true", "trap", "distractor"] = Field(
         ..., description="How this option should be treated in scoring."
     )
-    hint: str | None = Field(None, description="Optional meta note for the host about why the option works.")
 
 
 class MultipleChoiceResponse(BaseModel):
-    question: str
     options: List[MultipleChoiceOption]

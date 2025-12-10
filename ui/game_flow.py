@@ -184,7 +184,7 @@ class GameFlow:
             f"**Round {state.get('round', 1)}**:  \n"
             f"Current Storyteller: **{storyteller_name}**  \n"
             f"Current theme: **{current_theme}**  \n"
-            f"Current level: **{current_level.title() if isinstance(current_level, str) else current_level}**"
+            f"Current level: **{current_level}**"
         )
 
         if st.button("Refresh game view", key=f"{room.room_code}_refresh_view"):
@@ -282,6 +282,8 @@ class GameFlow:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if can_act:
             st.subheader("Question proposal")
+        current_theme = self._current_theme(room, state)
+        current_level = self._current_level_value(room, state)
         question_data = state.get("question") or {}
         if question_data:
             st.markdown(f"**Current question:** {question_data.get('question')}")
@@ -305,9 +307,30 @@ class GameFlow:
             "Edit question",
             key=manual_key,
         )
-        if st.button("Change question"):
+        action_col1, action_col2 = st.columns(2)
+        if action_col1.button("Change question", key=f"{room.room_code}_question_change"):
             if self._prepare_question(room, state, prefill_key, notify=True, force=True):
                 return
+        if action_col2.button("Rephrase question", key=f"{room.room_code}_question_rephrase"):
+            cleaned = manual_value.strip()
+            if not cleaned:
+                st.error("Please enter a question to rephrase.")
+            else:
+                try:
+                    with st.spinner("Rephrasing question..."):
+                        new_text = self.llm_service.rephrase_text(
+                            kind="question",
+                            text=cleaned,
+                            language=room.settings.language,
+                            theme=current_theme,
+                            level=current_level,
+                        )
+                except Exception as exc:
+                    st.error(f"Content service error: {exc}")
+                else:
+                    st.session_state[prefill_key] = new_text
+                    st.success("Question rephrased.")
+                    common.rerun()
 
         if st.button("Confirm question"):
             final_question = manual_value.strip()
@@ -327,14 +350,15 @@ class GameFlow:
         current_player_id: Optional[str],
     ) -> None:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
-        if can_act:
-            st.subheader("Storyteller answers")
+        st.subheader("Storyteller answers")
         question = (state.get("question") or {}).get("question")
         if not question:
             st.warning("Question not set yet.")
             return
         st.markdown(f"**Question:** {question}")
 
+        current_theme = self._current_theme(room, state)
+        current_level = self._current_level_value(room, state)
         if not can_act:
             st.info("Waiting for the Storyteller to confirm their answers...")
             return
@@ -348,25 +372,14 @@ class GameFlow:
             st.session_state[true_key] = st.session_state.pop(true_prefill_key)
         lookup = self._player_lookup(room)
         storyteller_obj = lookup.get(storyteller_id) if storyteller_id else None
+        storyteller_name = storyteller_obj.name if storyteller_obj else "Storyteller"
         st.text_area(
             "True answer",
             key=true_key,
             disabled=not can_act,
         )
-        if room.settings.gameplay_mode == GameplayMode.BLUFFING:
-            if trap_key not in st.session_state:
-                st.session_state[trap_key] = state.get("trap_answer") or ""
-            if trap_prefill_key in st.session_state:
-                st.session_state[trap_key] = st.session_state.pop(trap_prefill_key)
-            st.text_area(
-                "Trap answer",
-                key=trap_key,
-                disabled=not can_act,
-            )
-
-        col1, col2 = st.columns(2)
-        storyteller_name = storyteller_obj.name if storyteller_obj else "Storyteller"
-        if col1.button("Suggest honest answer"):
+        true_actions = st.columns(2)
+        if true_actions[0].button("Suggest honest answer", key=f"{room.room_code}_suggest_true"):
             try:
                 with st.spinner("Suggesting an honest answer..."):
                     resp = self.llm_service.suggest_true_answer(
@@ -381,21 +394,75 @@ class GameFlow:
                 st.error(f"Content service error: {exc}")
             else:
                 common.rerun()
-        if room.settings.gameplay_mode == GameplayMode.BLUFFING and col2.button("Suggest trap answer"):
-            try:
-                with st.spinner("Suggesting a trap answer..."):
-                    resp = self.llm_service.suggest_trap_answer(
-                        question=question,
-                        true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
-                        storyteller_name=storyteller_name,
-                        language=room.settings.language,
-                    )
-                st.session_state[trap_prefill_key] = resp.answer
-                st.success("Trap answer suggested.")
-            except Exception as exc:
-                st.error(f"Content service error: {exc}")
+        if true_actions[1].button("Rephrase true answer", key=f"{room.room_code}_rephrase_true"):
+            current = st.session_state.get(true_key, "").strip()
+            if not current:
+                st.error("Enter a true answer before rephrasing.")
             else:
-                common.rerun()
+                try:
+                    with st.spinner("Rephrasing true answer..."):
+                        rewritten = self.llm_service.rephrase_text(
+                            kind="true answer",
+                            text=current,
+                            language=room.settings.language,
+                            question=question,
+                            theme=current_theme,
+                            level=current_level,
+                        )
+                    st.session_state[true_prefill_key] = rewritten
+                    st.success("True answer rephrased.")
+                except Exception as exc:
+                    st.error(f"Content service error: {exc}")
+                else:
+                    common.rerun()
+
+        if room.settings.gameplay_mode == GameplayMode.BLUFFING:
+            if trap_key not in st.session_state:
+                st.session_state[trap_key] = state.get("trap_answer") or ""
+            if trap_prefill_key in st.session_state:
+                st.session_state[trap_key] = st.session_state.pop(trap_prefill_key)
+            st.text_area(
+                "Trap answer",
+                key=trap_key,
+                disabled=not can_act,
+            )
+            trap_actions = st.columns(2)
+            if trap_actions[0].button("Suggest trap answer", key=f"{room.room_code}_suggest_trap"):
+                try:
+                    with st.spinner("Suggesting a trap answer..."):
+                        resp = self.llm_service.suggest_trap_answer(
+                            question=question,
+                            true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
+                            storyteller_name=storyteller_name,
+                            language=room.settings.language,
+                        )
+                    st.session_state[trap_prefill_key] = resp.answer
+                    st.success("Trap answer suggested.")
+                except Exception as exc:
+                    st.error(f"Content service error: {exc}")
+                else:
+                    common.rerun()
+            if trap_actions[1].button("Rephrase trap answer", key=f"{room.room_code}_rephrase_trap"):
+                current = st.session_state.get(trap_key, "").strip()
+                if not current:
+                    st.error("Enter a trap answer before rephrasing.")
+                else:
+                    try:
+                        with st.spinner("Rephrasing trap answer..."):
+                            rewritten = self.llm_service.rephrase_text(
+                                kind="trap answer",
+                                text=current,
+                                language=room.settings.language,
+                                question=question,
+                                theme=current_theme,
+                                level=current_level,
+                            )
+                        st.session_state[trap_prefill_key] = rewritten
+                        st.success("Trap answer rephrased.")
+                    except Exception as exc:
+                        st.error(f"Content service error: {exc}")
+                    else:
+                        common.rerun()
 
         if st.button("Confirm answers"):
             true_answer = st.session_state.get(true_key, "").strip()
@@ -423,6 +490,8 @@ class GameFlow:
         can_act = self._storyteller_can_act(storyteller_id, current_player_id)
         if can_act:
             st.subheader("Build multiple choice options")
+        current_theme = self._current_theme(room, state)
+        current_level = self._current_level_value(room, state)
         question = (state.get("question") or {}).get("question", "")
         if question:
             st.markdown(f"**Question:** {question}")
@@ -454,7 +523,7 @@ class GameFlow:
             if prefill_key in st.session_state:
                 st.session_state[key] = st.session_state.pop(prefill_key)
 
-            col_text, col_btn = st.columns([4, 1])
+            col_text, col_btn = st.columns([4, 2])
             with col_text:
                 st.text_area(
                     f"{label} ({kind})",
@@ -478,6 +547,27 @@ class GameFlow:
                                 common.rerun()
                     except Exception as exc:
                         st.error(f"Content service error: {exc}")
+                if st.button("Rephrase", key=f"{key}_rephrase"):
+                    current = st.session_state.get(key, "").strip()
+                    if not current:
+                        st.error("Enter option text before rephrasing.")
+                    else:
+                        try:
+                            with st.spinner("Rephrasing option..."):
+                                updated = self.llm_service.rephrase_text(
+                                    kind=f"option {label}",
+                                    text=current,
+                                    question=question,
+                                    language=room.settings.language,
+                                    theme=current_theme,
+                                    level=current_level,
+                                )
+                            st.session_state[prefill_key] = updated
+                            st.success("Option rephrased.")
+                        except Exception as exc:
+                            st.error(f"Content service error: {exc}")
+                        else:
+                            common.rerun()
 
         if can_act and st.button("Confirm options & invite guesses"):
             # Persist any manual edits back to the game state.
@@ -688,6 +778,18 @@ class GameFlow:
     # ------------------------------------------------------------------ #
     # Scoring & helpers
     # ------------------------------------------------------------------ #
+    def _current_theme(self, room: Room, state: Dict[str, object]) -> str:
+        theme = state.get("selected_theme")
+        if not theme and room.settings.theme_mode == ThemeMode.STATIC and room.settings.selected_themes:
+            theme = room.settings.selected_themes[0]
+        return theme or "Open conversation"
+
+    def _current_level_value(self, room: Room, state: Dict[str, object]) -> str:
+        level_value = state.get("selected_level")
+        if not level_value and room.settings.level_mode == LevelMode.STATIC and room.settings.selected_level:
+            level_value = room.settings.selected_level.value
+        return level_value or Level.SHALLOW.value
+
     def _prepare_question(
         self,
         room: Room,

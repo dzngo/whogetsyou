@@ -136,3 +136,30 @@ class LLMService:
         ]
         text = self._llm.complete_text(messages)
         return text.strip()
+
+    def rephrase_text(
+        self,
+        kind: str,
+        text: str,
+        *,
+        language: str = "en",
+        question: Optional[str] = None,
+        theme: Optional[str] = None,
+        level: Optional[str] = None,
+    ) -> str:
+        """Lightly rephrase text while preserving meaning."""
+        messages = [
+            {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": llm_prompts.build_rephrase_prompt(
+                    kind=kind,
+                    text=text,
+                    language=language,
+                    question=question,
+                    theme=theme,
+                    level=level,
+                ),
+            },
+        ]
+        return self._llm.complete_text(messages).strip()
