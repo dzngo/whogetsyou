@@ -3,3 +3,5 @@ streamlit-tags==1.2.8
 openai>=1.51.0
 python-dotenv==1.0.1
 streamlit-autorefresh==1.0.1
+gspread==6.0.0
+oauth2client

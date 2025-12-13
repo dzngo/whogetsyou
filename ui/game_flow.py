@@ -21,6 +21,7 @@ from models import (
 from services.game_service import GameService
 from services.llm_service import LLMService
 from services.room_service import RoomService
+from storage.google_sheet_service import GoogleSheetService, GoogleSheetServiceError
 from ui import common
 
 
@@ -289,8 +290,19 @@ class GameFlow:
         current_level = self._current_level_value(room, state)
         question_data = state.get("question") or {}
         with st.container(border=True):
+
             if question_data:
                 st.markdown(f"**Current question:** {question_data.get('question')}")
+                st.caption(
+                    "🫰We are still improving question proposals. "
+                    "If a question feels off or especially good, please use the Like/Report buttons to share feedback. 🫰"
+                )
+                self._render_question_feedback_controls(
+                    room=room,
+                    question=question_data.get("question", ""),
+                    theme=current_theme,
+                    level=current_level,
+                )
 
         manual_key = f"{room.room_code}_question_text"
         prefill_key = f"{manual_key}_prefill"
@@ -797,6 +809,98 @@ class GameFlow:
         if not level_value and room.settings.level_mode == LevelMode.STATIC and room.settings.selected_level:
             level_value = room.settings.selected_level.value
         return level_value or Level.SHALLOW.value
+
+    def _render_question_feedback_controls(
+        self,
+        *,
+        room: Room,
+        question: str,
+        theme: str,
+        level: str,
+    ) -> None:
+        if not question.strip():
+            return
+        user_profile = st.session_state.get("user_profile") or {}
+        like_col, report_col = st.columns(2)
+        if like_col.button("❤️ Like", key=f"{room.room_code}_like_question"):
+            with st.spinner("Saving feedback ... "):
+                self._submit_question_feedback(
+                    user_profile=user_profile,
+                    question=question,
+                    theme=theme,
+                    level=level,
+                    action="like",
+                )
+
+        report_flag_key = f"{room.room_code}_show_report"
+        if report_col.button("⚠️ Report", key=f"{room.room_code}_report_question"):
+            st.session_state[report_flag_key] = not st.session_state.get(report_flag_key, False)
+        if st.session_state.get(report_flag_key):
+            reason_options = [
+                "Weird question",
+                "Doesn't match theme",
+                "Doesn't match level",
+                "Violent / harmful",
+                "Inappropriate / offensive",
+                "Other",
+            ]
+            reason_key = f"{room.room_code}_report_reason"
+            selected_reason = st.selectbox(
+                "Select a reason",
+                options=reason_options,
+                key=reason_key,
+            )
+            col_submit, col_cancel = st.columns([1, 1])
+            if col_submit.button("Submit report", key=f"{room.room_code}_submit_report"):
+                if selected_reason == "Select a reason":
+                    st.error("Please choose a reason before submitting.")
+                else:
+                    with st.spinner("Saving report feedback ... "):
+                        self._submit_question_feedback(
+                            user_profile=user_profile,
+                            question=question,
+                            theme=theme,
+                            level=level,
+                            action="report",
+                            reason=selected_reason,
+                        )
+                        st.session_state.pop(report_flag_key, None)
+                        st.session_state.pop(reason_key, None)
+                common.rerun()
+            if col_cancel.button("Cancel", key=f"{room.room_code}_cancel_report"):
+                st.session_state.pop(report_flag_key, None)
+                st.session_state.pop(reason_key, None)
+                common.rerun()
+
+    def _submit_question_feedback(
+        self,
+        *,
+        user_profile: Dict[str, object],
+        question: str,
+        theme: str,
+        level: str,
+        action: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        user_label = user_profile.get("email") or user_profile.get("name") or "Unknown player"
+        try:
+            GoogleSheetService().append_feedback(
+                user=str(user_label),
+                question=question,
+                theme=theme,
+                level=level,
+                action=action,
+                reason=reason,
+            )
+        except GoogleSheetServiceError as exc:
+            st.error(f"Unable to record feedback: {exc}")
+        except Exception as exc:
+            st.error(f"Unexpected error recording feedback: {exc}")
+        else:
+            if action == "like":
+                st.success("Thanks! Your like was recorded.")
+            else:
+                st.success("Report submitted. We'll review it soon.")
 
     def _prepare_question(
         self,

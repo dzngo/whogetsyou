@@ -76,6 +76,7 @@ def style_buttons() -> None:
           const confirmColor = '#1a73e8';
           const aiColor = '#ea8600';
           const magicColor = '#a73ac9';
+          const loveColor = '#cd0487' ;
           const paint = () => {
             const buttons = root.querySelectorAll('button');
             buttons.forEach((btn) => {
@@ -88,7 +89,8 @@ def style_buttons() -> None:
                 label.includes('back') || 
                 label.includes('change room') || 
                 label.includes('return') ||
-                label.includes('switch account')
+                label.includes('switch account') ||
+                label.includes('report')
               ) {
                 bg = dangerColor;
               } else if (
@@ -108,6 +110,9 @@ def style_buttons() -> None:
                 label.includes('regenerate')
               ) {
                 bg = aiColor;
+              } else if (label.includes('like')
+              ) {
+                bg = loveColor;
               } else if (
                 label.includes('rephrase')
               ) {
