@@ -8,7 +8,7 @@ from typing import Iterable, List
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
 
-from models import SUPPORTED_LANGUAGES
+from models import SUPPORTED_LANGUAGES, THEME_DESCRIPTIONS
 
 GAME_RULES_SUMMARY = """
 "Who Gets You?" is a multiplayer storytelling game about how well friends understand one another.
@@ -34,9 +34,8 @@ LEVEL_DESCRIPTIONS = {
     "deep": "Introspective and emotionally aware. Invites vulnerability, formative memories, or personal growth moments while staying respectful.",
 }
 
-QUESTION_VARIETY_FRAMES = [
+DEEP_VARIETY_FRAMES = [
     "Spotlight a small turning point—the moment a path or belief changed—and ask what led to it.",
-    "Use a sensory hook (sound, smell, texture) to pull out a vivid memory or story.",
     "Ask for the 'last time' they felt a specific emotion or vibe to ground responses in recent, concrete details.",
     "Frame it as advice to a past or future self so the answer mixes hindsight with vulnerability.",
     "Prompt them to offer advice to someone else facing the same situation, revealing their personal playbook.",
@@ -45,9 +44,9 @@ QUESTION_VARIETY_FRAMES = [
     "Use a 'what if' scenario: change one detail about the theme and ask how life might look different.",
     "Ask about a part of their story they've rarely shared—what kept it hidden and why might it matter now?",
     "Invite them to uncover a belief they once held quietly or secretly; what softened or strengthened it?",
-    "Prompt a 'never told' moment: a memory or insight they've carried privately that shaped how they show up today.",
     "Explore a regret or near-miss that still tugs at them—what does it reveal about who they hoped to be?",
     "Ask them to revisit a promise they couldn't keep and what that unfinished thread teaches them now.",
+    "Ask about their role related to the theme: who they become and how they tend to show up when this part of life is at stake.",
 ]
 
 MEDIUM_VARIETY_FRAMES = [
@@ -57,6 +56,7 @@ MEDIUM_VARIETY_FRAMES = [
     "Encourage them to describe a routine, playlist, or environment they rely on when this theme pops up.",
     "Ask for their opinion on a common assumption tied to the theme and how their experience affirms or challenges it.",
     "Invite them to share a mild regret or do-over they'd accept if it helped someone else feel seen.",
+    "Ask whether they've faced any recent difficulties or challenges related to the theme, and what they learned from them.",
 ]
 
 SYSTEM_PROMPT = f"""You are the narrative director for the party game "Who Gets You?". \
@@ -79,34 +79,60 @@ def _render_previous_questions(previous_questions: Iterable[str]) -> str:
 
 def build_question_prompt(theme: str, level: str, previous_questions: Iterable[str], language: str) -> str:
     language_name = _language_name(language)
-    if level.lower() == "shallow":
-        variety_frame = "Keep it light and welcoming; make it easy to answer."
-    elif level.lower() == "medium":
-        variety_frame = random.choice(MEDIUM_VARIETY_FRAMES)
+    description = THEME_DESCRIPTIONS.get(theme, "")
+    level_lower = (level or "").lower()
+    if level_lower == "shallow":
+        variety_frame_text = "Keep it light and welcoming; make it easy to answer."
+    elif level_lower == "medium":
+        variety_frame_text = random.choice(MEDIUM_VARIETY_FRAMES)
     else:
-        variety_frame = random.choice(QUESTION_VARIETY_FRAMES)
+        variety_frame_text = random.choice(DEEP_VARIETY_FRAMES)
     history_guardrail = (
-        "Treat the earlier questions below as off-limits source material—avoid reusing their structure or key phrases."
+        "Treat the earlier questions below as off-limits source material—do not copy their structure, opening patterns,"
+        " or key phrases, and avoid asking about the same specific situations."
         if previous_questions
         else "Still, write something that feels fresh compared to typical conversation starters."
     )
+    variety_line = ""
+    if random.random() < 0.7:
+        variety_line = f"Variety cue: {variety_frame_text}\n"
+    description_line = f"Theme guidance: {description}\n" if description else ""
     return (
         f"Generate a single question for the theme '{theme}'.\n"
         f"Depth: {level.title()} — {LEVEL_DESCRIPTIONS.get(level, 'Keep it warm and sincere')}.\n"
+        f"{description_line}"
         f"{_render_previous_questions(previous_questions)}\n"
         f"{history_guardrail}\n"
-        f"Variety cue: {variety_frame}\n"
+        f"{variety_line}"
         f"Write the final question entirely in {language_name}.\n"
         "Requirements:\n"
         "- Make it open-ended and non-repetitive.\n"
+        "- Do not reuse the same opening pattern (e.g. starting multiple times with the same phrase) across questions.\n"
+        "- Avoid asking again about exactly the same kind of moment, event, or scenario as the previous questions.\n"
         "- Surprise the group with an angle they haven't already explored; reward novelty and unexpected hooks (within the comfort of the selected depth).\n"
         "- Keep it respectful and supportive; avoid cliches, yes/no questions, or anything that might trigger trauma.\n"
         "- Output JSON with 'question'."
     )
 
 
-def build_answer_prompt(question: str, storyteller_name: str, gameplay_mode: str, language: str) -> str:
+def build_question_refine_prompt(question: str, language: str) -> str:
     language_name = _language_name(language)
+    return (
+        f"Rewrite the following question so that it becomes clearer and more natural in {language_name}, "
+        "and easy for players to answer.\n"
+        "Keep the original meaning, but improve the phrasing so it sounds warm, conversational, and emotionally inviting.\n"
+        "If the question feels too long, formal, or awkward, make it shorter and smoother while staying respectful.\n"
+        f"Question:\n{question}\n"
+        "Return JSON with a single field 'question' containing the refined question text."
+    )
+
+
+def build_answer_prompt(
+    question: str, storyteller_name: str, gameplay_mode: str, language: str, theme: str = ""
+) -> str:
+    language_name = _language_name(language)
+    theme_note = THEME_DESCRIPTIONS.get(theme, "")
+    theme_line = f"Theme guidance: {theme_note}\n" if theme_note else ""
     honesty_hint = (
         "Simple mode: answer truthfully while sounding conversational and specific."
         if gameplay_mode == "simple"
@@ -115,23 +141,27 @@ def build_answer_prompt(question: str, storyteller_name: str, gameplay_mode: str
     return (
         f"The storyteller is {storyteller_name}. Help them respond to:\n"
         f"Question: {question}\n"
+        f"{theme_line}"
         f"{honesty_hint}\n"
         f"Return the answer entirely in {language_name}.\n"
-        "Avoid to be wordy.\n"
+        "Keep it concise and avoid rambling.\n"
         "Return JSON with 'answer' (first-person) briefly explaining the emotional note you aimed for."
     )
 
 
-def build_trap_prompt(question: str, true_answer: str, storyteller_name: str, language: str) -> str:
+def build_trap_prompt(question: str, true_answer: str, storyteller_name: str, language: str, theme: str = "") -> str:
     language_name = _language_name(language)
+    theme_note = THEME_DESCRIPTIONS.get(theme, "")
+    theme_line = f"Theme guidance: {theme_note}\n" if theme_note else ""
     return (
         f"The storyteller {storyteller_name} already has the true answer below.\n"
         f"Question: {question}\n"
+        f"{theme_line}"
         f"True answer: {true_answer}\n"
         "Invent a believable but wrong answer (the 'trap') that close friends might mistake for the truth. "
         "Keep tone consistent with the storyteller's voice and avoid contradicting obvious facts from the true answer.\n"
         f"Write the trap entirely in {language_name}.\n"
-        "Avoid to be wordy.\n"
+        "Keep it concise and avoid rambling.\n"
         "Return JSON with 'answer'."
     )
 
@@ -143,8 +173,11 @@ def build_multiple_choice_prompt(
     level: str,
     num_distractors: int,
     language: str,
+    theme: str = "",
 ) -> str:
     language_name = _language_name(language)
+    theme_note = THEME_DESCRIPTIONS.get(theme, "")
+    theme_line = f"Theme guidance: {theme_note}\n" if theme_note else ""
     trap_line = (
         f"The storyteller also provided a trap answer for Bluffing mode:\nTrap: {trap_answer}\n"
         if trap_answer
@@ -153,8 +186,10 @@ def build_multiple_choice_prompt(
     return (
         f"Create multiple-choice options for listeners guessing {question}\n"
         f"Depth guidance: {level.title()} — {LEVEL_DESCRIPTIONS.get(level, 'balanced tone')}.\n"
+        f"{theme_line}"
         f"True answer: {true_answer}\n"
         f"{trap_line}"
+        "Keep each option roughly the same length so no choice stands out purely by size.\n"
         f"Write every option entirely in {language_name}.\n"
         f"Include exactly {num_distractors} additional distractors that sound natural.\n"
         "Avoid to be wordy.\n"

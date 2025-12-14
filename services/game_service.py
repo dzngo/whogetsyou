@@ -59,7 +59,7 @@ class GameService:
             "selected_level": room.settings.selected_level.value if room.settings.selected_level else None,
             "question": None,
             "question_autogen_attempted": False,
-            "question_history": [],
+            "question_history": {},
             "true_answer": None,
             "trap_answer": None,
             "multiple_choice": None,

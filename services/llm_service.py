@@ -39,7 +39,27 @@ class LLMService:
                 ),
             },
         ]
-        return self._llm.parse_structured(messages, llm_prompts.QuestionLLMResponse)
+        raw = self._llm.parse_structured(messages, llm_prompts.QuestionLLMResponse)
+        # Light refinement pass to improve fluency and simplicity in the chosen language
+
+        try:
+            refine_messages = [
+                {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": llm_prompts.build_question_refine_prompt(
+                        question=raw.question,
+                        language=language,
+                    ),
+                },
+            ]
+            refined = self._llm.parse_structured(refine_messages, llm_prompts.QuestionLLMResponse)
+            if refined and refined.question:
+                raw.question = refined.question
+        except Exception:
+            # If refinement fails for any reason, fall back to the original question.
+            pass
+        return raw
 
     def suggest_true_answer(
         self,
@@ -48,6 +68,7 @@ class LLMService:
         gameplay_mode: GameplayMode,
         *,
         language: str = "en",
+        theme: str = "",
     ) -> llm_prompts.AnswerSuggestionResponse:
         messages = [
             {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
@@ -58,6 +79,7 @@ class LLMService:
                     storyteller_name=storyteller_name,
                     gameplay_mode=gameplay_mode.value,
                     language=language,
+                    theme=theme,
                 ),
             },
         ]
@@ -70,6 +92,7 @@ class LLMService:
         storyteller_name: str,
         *,
         language: str = "en",
+        theme: str = "",
     ) -> llm_prompts.AnswerSuggestionResponse:
         messages = [
             {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
@@ -80,6 +103,7 @@ class LLMService:
                     true_answer=true_answer,
                     storyteller_name=storyteller_name,
                     language=language,
+                    theme=theme,
                 ),
             },
         ]
@@ -93,6 +117,7 @@ class LLMService:
         trap_answer: Optional[str] = None,
         num_distractors: int = 2,
         language: str = "en",
+        theme: str = "",
     ) -> llm_prompts.MultipleChoiceResponse:
         messages = [
             {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
@@ -105,6 +130,7 @@ class LLMService:
                     level=level.value,
                     num_distractors=num_distractors,
                     language=language,
+                    theme=theme,
                 ),
             },
         ]

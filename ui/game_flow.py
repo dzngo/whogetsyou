@@ -350,7 +350,12 @@ class GameFlow:
                 st.error("Please enter a question.")
                 return
             state["question"] = {"question": final_question}
-            state.setdefault("question_history", []).append(final_question)
+            history_container = state.setdefault("question_history", {})
+            if isinstance(history_container, list):
+                history_container = {"__legacy__": history_container}
+                state["question_history"] = history_container
+            history_key = f"{current_theme}::{current_level}"
+            history_container.setdefault(history_key, []).append(final_question)
             state["phase"] = "answer_entry"
             self._save_state(room, state)
 
@@ -401,6 +406,7 @@ class GameFlow:
                         storyteller_name=storyteller_name,
                         gameplay_mode=room.settings.gameplay_mode,
                         language=room.settings.language,
+                        theme=current_theme,
                     )
                 st.session_state[true_prefill_key] = resp.answer
                 st.success("True answer suggested.")
@@ -449,6 +455,7 @@ class GameFlow:
                             true_answer=st.session_state.get(true_key, state.get("true_answer", "")),
                             storyteller_name=storyteller_name,
                             language=room.settings.language,
+                            theme=current_theme,
                         )
                     st.session_state[trap_prefill_key] = resp.answer
                     st.success("Trap answer suggested.")
@@ -914,13 +921,20 @@ class GameFlow:
         if not force and state.get("question_autogen_attempted"):
             return False
         state["question_autogen_attempted"] = True
+        history_map = state.get("question_history") or {}
+        if isinstance(history_map, list):
+            history_map = {"__legacy__": history_map}
+            state["question_history"] = history_map
+        theme = state.get("selected_theme") or "General"
+        level_value = state.get("selected_level", Level.SHALLOW.value)
+        history_key = f"{theme}::{level_value}"
+        previous_questions = (history_map.get(history_key) or [])[-50:]
         try:
-            prev = state.get("question_history", [])[-5:]
             with st.spinner("Preparing a fresh question..."):
                 resp = self.llm_service.generate_question(
-                    theme=state.get("selected_theme") or "General",
-                    level=Level(state.get("selected_level", Level.SHALLOW.value)),
-                    previous_questions=prev,
+                    theme=theme,
+                    level=Level(level_value),
+                    previous_questions=previous_questions,
                     language=room.settings.language,
                 )
         except Exception as exc:
@@ -929,7 +943,11 @@ class GameFlow:
             return False
         payload = resp.model_dump()
         state["question"] = payload
-        state.setdefault("question_history", []).append(payload["question"])
+        history_container = state.setdefault("question_history", {})
+        if isinstance(history_container, list):
+            history_container = {"__legacy__": history_container}
+            state["question_history"] = history_container
+        history_container.setdefault(history_key, []).append(payload["question"])
         st.session_state[prefill_key] = payload["question"]
         if notify:
             st.success("Question updated.")
@@ -948,6 +966,7 @@ class GameFlow:
         if not force and state.get("options_autogen_attempted"):
             return False
         state["options_autogen_attempted"] = True
+        current_theme = self._current_theme(room, state)
         try:
             with st.spinner("Preparing multiple choices..."):
                 resp = self.llm_service.build_multiple_choice(
@@ -956,6 +975,7 @@ class GameFlow:
                     level=Level(state.get("selected_level", Level.SHALLOW.value)),
                     trap_answer=state.get("trap_answer"),
                     language=room.settings.language,
+                    theme=current_theme,
                 )
         except Exception as exc:
             self.game_service.set_state(room, state)

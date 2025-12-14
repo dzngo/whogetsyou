@@ -48,6 +48,18 @@ DEFAULT_THEMES: List[str] = [
     "Travel ✈️",
 ]
 
+THEME_DESCRIPTIONS: Dict[str, str] = {
+    "Yourself 🌱": "Self-awareness, snapshots from personal daily life, small facts about you, and how you understand yourself",
+    "Childhood 👶": "Memories, lessons, and stories from your early years or upbringing.",
+    "Family 🏡": "Experiences with family members—the easy moments, the support, and the messy parts too.",
+    "Goals ✨": "Dreams you're actively pursuing and milestones you want to reach.",
+    "Work 💼": "Professional life including coworkers, relationships with managers, and how you show up on the job, challenges at work",
+    "Love 💖": "Romantic relationships, intimacy, and how you show love to a partner.",
+    "Friends 🤝": "Friendship stories (old or new), chosen family moments, and the support you get or give.",
+    "Hobbies 🎨": "Passions, creative outlets, and how you unwind or express yourself.",
+    "Travel ✈️": "Journeys, discoveries, and how exploring reshapes your worldview.",
+}
+
 SUPPORTED_LANGUAGES: Dict[str, str] = {
     "en": "English",
     "vn": "Tiếng Việt",
