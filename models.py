@@ -49,15 +49,25 @@ DEFAULT_THEMES: List[str] = [
 ]
 
 THEME_DESCRIPTIONS: Dict[str, str] = {
-    "Yourself 🌱": "Self-awareness, snapshots from personal daily life, small facts about you, and how you understand yourself",
-    "Childhood 👶": "Memories, lessons, and stories from your early years or upbringing.",
-    "Family 🏡": "Experiences with family members—the easy moments, the support, and the messy parts too.",
-    "Goals ✨": "Dreams you're actively pursuing and milestones you want to reach.",
-    "Work 💼": "Professional life including coworkers, relationships with managers, and how you show up on the job, challenges at work",
-    "Love 💖": "Romantic relationships, intimacy, and how you show love to a partner.",
-    "Friends 🤝": "Friendship stories (old or new), chosen family moments, and the support you get or give.",
-    "Hobbies 🎨": "Passions, creative outlets, and how you unwind or express yourself.",
-    "Travel ✈️": "Journeys, discoveries, and how exploring reshapes your worldview.",
+    "Yourself 🌱": "Self-awareness, snapshots from personal daily life, facts about you, your interests, how you understand yourself, "
+    "identity shifts, self-talk, and micro-habits that reveal who you are.",
+    "Childhood 👶": "Memories, lessons, and stories from your early years or upbringing that cover family dynamics, formative friendships, "
+    "caretakers, and big kid feelings.",
+    "Family 🏡": "Experiences with family members, easy moments, the support, the messy parts too, plus traditions, conflict repair, "
+    "generational expectations, and how you set boundaries,facts about specific family members, facts about you within your family role, "
+    "and the little quirks that define your home life.",
+    "Goals ✨": "Dreams you're actively pursuing and milestones you want to reach, including career leaps,"
+    " health quests, creative ambitions, and bucket-list experiments.",
+    "Work 💼": "Professional life including coworkers, relationships with managers, how you show up on the job, and challenges at "
+    "work—dive into team dynamics, promotions, burnout recovery, and leadership style.",
+    "Love 💖": "Romantic relationships, intimacy, how you show love to a partner, dating history, love languages, green/red flags, "
+    "communication styles, conflict repair, and what you want next (commitment, freedom, stability, adventure) or fact about your partner",
+    "Friends 🤝": "Friendship stories (old or new), chosen family moments, and the support you get or give alongside how you met, "
+    "inside jokes, fun facts about your friends, loyalty tests, boundaries, rituals of care, and long-distance bonds.",
+    "Hobbies 🎨": "Passions, creative outlets, and how you unwind or express yourself by talking through learning curves, the "
+    "communities around your craft, resources you lean on, and dream collaborations.",
+    "Travel ✈️": "Journeys, discoveries, and how exploring reshapes your worldview with space for planning quirks, culture shocks,"
+    " travel buddies, and the lessons that stuck with you.",
 }
 
 SUPPORTED_LANGUAGES: Dict[str, str] = {

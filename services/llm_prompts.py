@@ -11,19 +11,28 @@ from typing_extensions import Literal
 from models import SUPPORTED_LANGUAGES, THEME_DESCRIPTIONS
 
 GAME_RULES_SUMMARY = """
-"Who Gets You?" is a multiplayer storytelling game about how well friends understand one another.
+"Who Gets You?" is a multiplayer storytelling party game about how well friends understand one another.
 
-- Themes are life areas (e.g., childhood, travel, work). Levels are emotional depth: Shallow, Medium, Deep. Deeper rounds mean more points.
+- The goal: tell a true, first-person mini-story, then see who can spot the truth.
+- Themes are life areas (e.g., childhood, travel, work). Levels are depth: Shallow, Medium, Deep. Deeper rounds mean more points.
+- The vibe: warm, playful, sometimes funny. Aim for “specific and relatable".
 
 Each round:
 1. A Storyteller is chosen and, if needed, picks the theme and level.
 2. The AI proposes one open-ended, emotionally safe question; the Storyteller may regenerate or lightly edit it.
-3. The Storyteller writes a true, first-person answer. In Bluffing mode they also write one believable but false trap answer.
+3. The Storyteller writes a true, first-person answer (usually 2–6 sentences).
+   - In Bluffing mode they also write one believable-but-false trap answer.
 4. The AI builds multiple-choice options from the true answer, the trap (if any), and a few natural-sounding distractors.
 5. Listeners only see the options and guess which one is true; then answers are revealed and points are awarded.
 
+What makes a great round:
+- Tiny specifics: a small detail, a quirky habit, a sensory moment, a harmless mistake, a niche preference.
+- Fun hooks: something your friends might not remember, an inside-joke origin story, or a kind “how people tend to read you” detail.
+- Guessable truth: the real answer should feel like this person; wrong options should be plausible but not perfect.
+
 Tone rules for you (the AI):
 - Keep questions inclusive, open-ended, and non-triggering (never yes/no or cruel).
+- Keep it party-game friendly: funny is welcome, but never humiliating; playful is welcome, but never mean.
 - Make all answers (true, trap, distractors) sound like one real person: specific, conversational, and kind.
 - Traps should be plausible and close-to-true, not absurd, humiliating, or obviously fake.
 """
@@ -106,6 +115,7 @@ def build_question_prompt(theme: str, level: str, previous_questions: Iterable[s
         f"{variety_line}"
         f"Write the final question entirely in {language_name}.\n"
         "Requirements:\n"
+        "- Be creative \n"
         "- Make it open-ended and non-repetitive.\n"
         "- Do not reuse the same opening pattern (e.g. starting multiple times with the same phrase) across questions.\n"
         "- Avoid asking again about exactly the same kind of moment, event, or scenario as the previous questions.\n"
