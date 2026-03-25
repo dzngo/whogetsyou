@@ -40,9 +40,8 @@ class HostFlow:
     @staticmethod
     def _default_state() -> Dict[str, object]:
         return {
-            "step": "room_name",
+            "step": "host_name",
             "host_name": "",
-            "host_email": "",
             "room_name": "",
             "room_code": None,
             "existing_room_code": None,
@@ -62,11 +61,17 @@ class HostFlow:
 
     @property
     def state(self) -> Dict[str, object]:
-        return common.get_flow_state(self.STATE_KEY, defaults=self._default_state())
+        state = common.get_flow_state(self.STATE_KEY, defaults=self._default_state())
+        defaults = self._default_state()
+        for key, value in defaults.items():
+            state.setdefault(key, value)
+        return state
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "room_name":
+        if step == "host_name":
+            self._render_host_name()
+        elif step == "room_name":
             self._render_room_name()
         elif step == "existing_room_decision":
             self._render_existing_room_decision()
@@ -83,19 +88,31 @@ class HostFlow:
             self.reset()
             common.rerun()
 
+    def _render_host_name(self) -> None:
+        state = self.state
+        st.subheader("Your name")
+        host_name = st.text_input("Host name", value=state["host_name"])
+        col1, col2 = st.columns(2)
+        if col1.button("Back", key="host_name_back"):
+            self.reset()
+            st.session_state["route"] = "entry"
+            common.rerun()
+        if col2.button("Next", key="host_name_next"):
+            cleaned = host_name.strip()
+            if not cleaned:
+                st.error("Please enter your name.")
+                return
+            state["host_name"] = cleaned
+            state["step"] = "room_name"
+            common.rerun()
+
     def _render_room_name(self) -> None:
         state = self.state
         st.subheader("Room name")
-        profile = st.session_state.get("user_profile") or {}
-        if profile:
-            state["host_name"] = profile.get("name", state["host_name"])
-            state["host_email"] = profile.get("email", state["host_email"])
-            st.caption(f"Signed in as **{profile.get('name', '')}** ({profile.get('email', '')})")
         name = st.text_input("Room name", value=state["room_name"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
-            self.reset()
-            st.session_state["route"] = "entry"
+            state["step"] = "host_name"
             common.rerun()
         if col2.button("Next", key="room_name_next"):
             cleaned = name.strip()
@@ -126,13 +143,8 @@ class HostFlow:
         st.success("A room with this name already exists.")
         common.show_room_summary(room)
         col1, col2, col3 = st.columns(3)
-        profile = st.session_state.get("user_profile") or {}
         if col1.button("Reuse room", key="existing_reuse"):
-            updated = self.room_service.reuse_room(
-                room,
-                profile.get("name", state["host_name"]),
-                profile.get("email", state["host_email"]),
-            )
+            updated = self.room_service.reuse_room(room, state["host_name"])
             state["room_code"] = updated.room_code
             state["step"] = "lobby"
             common.rerun()
@@ -300,7 +312,6 @@ class HostFlow:
             common.rerun()
         if col2.button("Next", key="language_next"):
             settings = self._build_room_settings(state)
-            profile = st.session_state.get("user_profile") or {}
             try:
                 if state["editing_existing"] and state["existing_room_code"]:
                     room = self._get_existing_room()
@@ -311,15 +322,13 @@ class HostFlow:
                         return
                     updated = self.room_service.reconfigure_room(
                         room,
-                        profile.get("name", state["host_name"]),
-                        profile.get("email", state.get("host_email", "")),
+                        state["host_name"],
                         settings,
                     )
                     state["room_code"] = updated.room_code
                 else:
                     room = self.room_service.create_room(
-                        profile.get("name", state["host_name"]),
-                        profile.get("email", state.get("host_email", "")),
+                        state["host_name"],
                         state["room_name"],
                         settings,
                     )
@@ -348,7 +357,6 @@ class HostFlow:
             "player_id": room.host_id,
             "room_code": room.room_code,
             "name": room.host_name,
-            "email": host_player.email if host_player else "",
         }
         common.show_room_summary(room, display_llm=True)
         st.markdown("### Connected players")

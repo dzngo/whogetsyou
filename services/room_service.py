@@ -6,7 +6,7 @@ import random
 import string
 import uuid
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from models import (
     GameplayMode,
@@ -36,6 +36,10 @@ class InvalidRoomSettingsError(RoomServiceError):
     pass
 
 
+class PlayerNotFoundError(RoomServiceError):
+    pass
+
+
 class RoomService:
     """Handles room lifecycle before the in-game flow begins."""
 
@@ -52,11 +56,11 @@ class RoomService:
             return None
         return self.repository.get_by_name(name)
 
-    def create_room(self, host_name: str, host_email: str, room_name: str, settings: RoomSettings) -> Room:
+    def create_room(self, host_name: str, room_name: str, settings: RoomSettings) -> Room:
         """Creates a completely new room with the provided configuration."""
         self._validate_settings(settings)
         now = datetime.utcnow()
-        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
+        host_player = self._build_player(host_name, PlayerRole.HOST)
         room = Room(
             room_code=self._generate_room_code(),
             name=room_name.strip(),
@@ -71,9 +75,9 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reuse_room(self, room: Room, host_name: str, host_email: str) -> Room:
+    def reuse_room(self, room: Room, host_name: str) -> Room:
         """Resets players for an existing room while keeping configuration."""
-        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
+        host_player = self._build_player(host_name, PlayerRole.HOST)
         room.host_id = host_player.player_id
         room.host_name = host_player.name
         room.players = [host_player]
@@ -82,10 +86,10 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reconfigure_room(self, room: Room, host_name: str, host_email: str, settings: RoomSettings) -> Room:
+    def reconfigure_room(self, room: Room, host_name: str, settings: RoomSettings) -> Room:
         """Keeps the room code/name but overwrites settings."""
         self._validate_settings(settings)
-        host_player = self._build_player(host_name, host_email, PlayerRole.HOST)
+        host_player = self._build_player(host_name, PlayerRole.HOST)
         room.host_id = host_player.player_id
         room.host_name = host_player.name
         room.players = [host_player]
@@ -95,23 +99,36 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def add_player(self, room: Room, player_name: str, player_email: str) -> Player:
+    def add_player(self, room: Room, player_name: str) -> Player:
         """Adds a listener to a room if the game hasn't started."""
         if room.started:
             raise RoomAlreadyStartedError(f"Room {room.room_code} has already started the game.")
-        normalized_email = player_email.strip().lower()
+        normalized_name = player_name.strip().lower()
+        if not normalized_name:
+            raise ValueError("Player name cannot be empty.")
         for existing in room.players:
-            if existing.email.strip().lower() == normalized_email:
+            if existing.name.strip().lower() == normalized_name:
                 existing.name = player_name.strip() or existing.name
                 existing.is_connected = True
                 room.update_timestamp()
                 self.repository.save(room)
                 return existing
-        player = self._build_player(player_name, player_email, PlayerRole.JOINER)
+        player = self._build_player(player_name, PlayerRole.JOINER)
         room.players.append(player)
         room.update_timestamp()
         self.repository.save(room)
         return player
+
+    def reclaim_player(self, room: Room, player_id: str) -> Player:
+        if not player_id:
+            raise PlayerNotFoundError("Missing player id.")
+        for player in room.players:
+            if player.player_id == player_id:
+                player.is_connected = True
+                room.update_timestamp()
+                self.repository.save(room)
+                return player
+        raise PlayerNotFoundError(f"Player {player_id} does not exist in room {room.room_code}.")
 
     def adjust_gameplay_mode(self, room: Room, gameplay_mode: GameplayMode) -> Room:
         room.settings.gameplay_mode = gameplay_mode
@@ -144,17 +161,13 @@ class RoomService:
             if not self.repository.get_by_code(code):
                 return code
 
-    def _build_player(self, name: str, email: str, role: PlayerRole) -> Player:
+    def _build_player(self, name: str, role: PlayerRole) -> Player:
         cleaned = name.strip()
-        cleaned_email = email.strip().lower()
         if not cleaned:
             raise ValueError("Player name cannot be empty.")
-        if not cleaned_email:
-            raise ValueError("Email is required.")
         return Player(
             player_id=str(uuid.uuid4()),
             name=cleaned,
-            email=cleaned_email,
             role=role,
             joined_at=datetime.utcnow(),
         )
@@ -169,14 +182,3 @@ class RoomService:
 
     def list_rooms(self) -> List[Room]:
         return self.repository.list_rooms()
-
-    def find_player_memberships(self, email: str) -> List[Tuple[Room, Player]]:
-        normalized = email.strip().lower()
-        if not normalized:
-            return []
-        matches: List[Tuple[Room, Player]] = []
-        for room in self.list_rooms():
-            for player in room.players:
-                if player.email.strip().lower() == normalized:
-                    matches.append((room, player))
-        return matches

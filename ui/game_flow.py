@@ -827,12 +827,12 @@ class GameFlow:
     ) -> None:
         if not question.strip():
             return
-        user_profile = st.session_state.get("user_profile") or {}
+        player_profile = st.session_state.get("player_profile") or {}
         like_col, report_col = st.columns(2)
         if like_col.button("❤️ Like", key=f"{room.room_code}_like_question"):
             with st.spinner("Saving feedback ... "):
                 self._submit_question_feedback(
-                    user_profile=user_profile,
+                    player_profile=player_profile,
                     question=question,
                     theme=theme,
                     level=level,
@@ -864,7 +864,7 @@ class GameFlow:
                 else:
                     with st.spinner("Saving report feedback ... "):
                         self._submit_question_feedback(
-                            user_profile=user_profile,
+                            player_profile=player_profile,
                             question=question,
                             theme=theme,
                             level=level,
@@ -882,14 +882,14 @@ class GameFlow:
     def _submit_question_feedback(
         self,
         *,
-        user_profile: Dict[str, object],
+        player_profile: Dict[str, object],
         question: str,
         theme: str,
         level: str,
         action: str,
         reason: Optional[str] = None,
     ) -> None:
-        user_label = user_profile.get("email") or user_profile.get("name") or "Unknown player"
+        user_label = player_profile.get("name") or "Unknown player"
         try:
             GoogleSheetService().append_feedback(
                 user=str(user_label),
