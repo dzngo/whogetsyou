@@ -41,12 +41,6 @@ def show_room_summary(room: Room, display_llm: bool = False) -> None:
         with columns[0]:
             st.write(f"**Room code:** `{room.room_code}`")
             settings = room.settings
-            theme_desc = settings.theme_mode.value.title()
-            if settings.theme_mode.value == "static" and settings.selected_themes:
-                theme_desc += f" ({', '.join(settings.selected_themes)})"
-            level_desc = settings.level_mode.value.title()
-            if settings.level_mode.value == "static" and settings.selected_level:
-                level_desc += f" ({settings.selected_level.value.title()})"
             st.write(f"**Max score:** {settings.max_score}")
             language_name = SUPPORTED_LANGUAGES.get(settings.language.lower(), settings.language.upper())
             flag = LANGUAGE_FLAGS.get(settings.language.lower(), "")
@@ -57,9 +51,9 @@ def show_room_summary(room: Room, display_llm: bool = False) -> None:
                 st.write(f"**Assistant:** {llm_display}")
 
         with columns[1]:
-            st.write(f"**Theme mode:** {theme_desc}")
-            st.write(f"**Level mode:** {level_desc}")
-            st.write(f"**Gameplay mode:** {settings.gameplay_mode.value.title()}")
+            st.write("**Theme selection:** Dynamic (Storyteller picks each round)")
+            st.write("**Level selection:** Dynamic (Shallow/Deep)")
+            st.write("**Gameplay mode:** Standard")
 
 
 def style_buttons() -> None:

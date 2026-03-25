@@ -8,26 +8,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
-class GameplayMode(str, Enum):
-    """Gameplay variations supported by the specification."""
-
-    SIMPLE = "simple"
-    BLUFFING = "bluffing"
-
-
-class ThemeMode(str, Enum):
-    STATIC = "static"
-    DYNAMIC = "dynamic"
-
-
-class LevelMode(str, Enum):
-    STATIC = "static"
-    DYNAMIC = "dynamic"
-
-
 class Level(str, Enum):
     SHALLOW = "shallow"
-    MEDIUM = "medium"
     DEEP = "deep"
 
 
@@ -138,22 +120,12 @@ class Player:
 
 @dataclass
 class RoomSettings:
-    theme_mode: ThemeMode = ThemeMode.DYNAMIC
-    selected_themes: List[str] = field(default_factory=list)
-    level_mode: LevelMode = LevelMode.DYNAMIC
-    selected_level: Optional[Level] = None
-    gameplay_mode: GameplayMode = GameplayMode.SIMPLE
     max_score: int = 100
     language: str = "en"
     llm_model: str = "gemini-2.5-flash"
 
     def to_dict(self) -> Dict[str, object]:
         return {
-            "theme_mode": self.theme_mode.value,
-            "selected_themes": list(self.selected_themes),
-            "level_mode": self.level_mode.value,
-            "selected_level": self.selected_level.value if self.selected_level else None,
-            "gameplay_mode": self.gameplay_mode.value,
             "max_score": self.max_score,
             "language": self.language,
             "llm_model": self.llm_model,
@@ -162,11 +134,6 @@ class RoomSettings:
     @classmethod
     def from_dict(cls, data: Dict[str, object]) -> "RoomSettings":
         return cls(
-            theme_mode=ThemeMode(data["theme_mode"]),
-            selected_themes=list(data.get("selected_themes", [])),
-            level_mode=LevelMode(data["level_mode"]),
-            selected_level=Level(data["selected_level"]) if data.get("selected_level") else None,
-            gameplay_mode=GameplayMode(data["gameplay_mode"]),
             max_score=int(data.get("max_score", 100)),
             language=str(data.get("language", "en")),
             llm_model=str(data.get("llm_model", "gemini-2.5-flash")),
@@ -217,4 +184,3 @@ class Room:
             settings=RoomSettings.from_dict(data["settings"]),
             game_state=dict(data.get("game_state", {})),
         )
-

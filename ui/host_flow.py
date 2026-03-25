@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
 from models import (
     SUPPORTED_LLM_MODELS,
-    GameplayMode,
-    Level,
-    LevelMode,
-    PlayerRole,
-    RoomSettings,
-    ThemeMode,
     LANGUAGE_FLAGS,
     SUPPORTED_LANGUAGES,
+    PlayerRole,
+    RoomSettings,
 )
 from services.game_service import GameService
 from services.llm_service import LLMService
@@ -46,14 +42,8 @@ class HostFlow:
             "room_code": None,
             "existing_room_code": None,
             "editing_existing": False,
-            "theme_mode": ThemeMode.DYNAMIC.value,
-            "selected_themes": [],
-            "custom_themes": [],
-            "level_mode": LevelMode.DYNAMIC.value,
-            "selected_level": Level.SHALLOW.value,
             "language": "en",
             "llm_model": "gemini-2.5-flash",
-            "clear_custom_theme_input": False,
         }
 
     def reset(self) -> None:
@@ -75,10 +65,6 @@ class HostFlow:
             self._render_room_name()
         elif step == "existing_room_decision":
             self._render_existing_room_decision()
-        elif step == "theme_mode":
-            self._render_theme_mode()
-        elif step == "level_mode":
-            self._render_level_mode()
         elif step == "language":
             self._render_language()
         elif step == "lobby":
@@ -128,7 +114,7 @@ class HostFlow:
             else:
                 state["existing_room_code"] = None
                 state["editing_existing"] = False
-                state["step"] = "theme_mode"
+                state["step"] = "language"
             common.rerun()
 
     def _render_existing_room_decision(self) -> None:
@@ -137,7 +123,7 @@ class HostFlow:
         room = self._get_existing_room()
         if not room:
             st.info("Room not found anymore. Let's create a new one.")
-            state["step"] = "theme_mode"
+            state["step"] = "language"
             common.rerun()
             return
         st.success("A room with this name already exists.")
@@ -150,123 +136,12 @@ class HostFlow:
             common.rerun()
         if col2.button("Change settings", key="existing_change"):
             state["editing_existing"] = True
-            state["theme_mode"] = room.settings.theme_mode.value
-            state["selected_themes"] = list(room.settings.selected_themes)
-            state["custom_themes"] = []
-            state["level_mode"] = room.settings.level_mode.value
-            state["selected_level"] = (
-                room.settings.selected_level.value if room.settings.selected_level else Level.SHALLOW.value
-            )
             state["language"] = room.settings.language
             state["llm_model"] = room.settings.llm_model
-            state["step"] = "theme_mode"
+            state["step"] = "language"
             common.rerun()
         if col3.button("Back", key="existing_back"):
             state["step"] = "room_name"
-            common.rerun()
-
-    def _render_theme_mode(self) -> None:
-        state = self.state
-        if state.get("clear_custom_theme_input"):
-            state["clear_custom_theme_input"] = False
-            st.session_state["custom_theme_input"] = ""
-        st.subheader("Select theme mode")
-        mode = st.radio(
-            "Theme mode",
-            options=[ThemeMode.STATIC.value, ThemeMode.DYNAMIC.value],
-            format_func=lambda value: value.title(),
-            index=0 if state["theme_mode"] == ThemeMode.STATIC.value else 1,
-            key="theme_mode_radio",
-        )
-        state["theme_mode"] = mode
-        selected_themes = list(state["selected_themes"])
-        if mode == ThemeMode.STATIC.value:
-            st.caption("Choose at least one theme.")
-            suggestions = self.llm_service.suggest_themes()
-            available = list(dict.fromkeys(suggestions + state["custom_themes"]))
-            selected = st.multiselect(
-                "Suggested themes",
-                options=available,
-                default=[theme for theme in selected_themes if theme in available],
-            )
-            custom_input = st.text_input(
-                "Add custom theme(s) separated by comma",
-                key="custom_theme_input",
-            )
-            if st.button("Add custom themes", key="add_custom_themes"):
-                new_entries = [item.strip().title() for item in custom_input.split(",") if item.strip()]
-                new_custom = list(state["custom_themes"])
-                changed = False
-                for entry in new_entries:
-                    if entry not in new_custom:
-                        new_custom.append(entry)
-                        changed = True
-                rerun_needed = False
-                if changed:
-                    state["custom_themes"] = new_custom
-                    rerun_needed = True
-                if new_entries:
-                    state["clear_custom_theme_input"] = True
-                    rerun_needed = True
-                if rerun_needed:
-                    common.rerun()
-            state["selected_themes"] = selected
-        else:
-            state["selected_themes"] = []
-            state["custom_themes"] = []
-
-        back_target = (
-            "existing_room_decision" if state["editing_existing"] and state["existing_room_code"] else "room_name"
-        )
-        col1, col2 = st.columns(2)
-        if col1.button("Back", key="theme_back"):
-            state["step"] = back_target
-            common.rerun()
-        if col2.button("Next", key="theme_next"):
-            if mode == ThemeMode.STATIC.value:
-                final_themes = state["selected_themes"] + [
-                    theme for theme in state["custom_themes"] if theme not in state["selected_themes"]
-                ]
-                if not final_themes:
-                    st.error("Select at least one theme for static mode.")
-                    return
-                state["selected_themes"] = final_themes
-            state["step"] = "level_mode"
-            common.rerun()
-
-    def _render_level_mode(self) -> None:
-        state = self.state
-        st.subheader("Select level mode")
-        mode = st.radio(
-            "Level mode",
-            options=[LevelMode.STATIC.value, LevelMode.DYNAMIC.value],
-            format_func=lambda value: value.title(),
-            index=0 if state["level_mode"] == LevelMode.STATIC.value else 1,
-            key="level_mode_radio",
-        )
-        state["level_mode"] = mode
-        level_choice: Optional[str] = None
-        if mode == LevelMode.STATIC.value:
-            level_choice = st.selectbox(
-                "Choose level",
-                options=[Level.SHALLOW.value, Level.MEDIUM.value, Level.DEEP.value],
-                format_func=lambda value: value.title(),
-                index=[
-                    Level.SHALLOW.value,
-                    Level.MEDIUM.value,
-                    Level.DEEP.value,
-                ].index(state["selected_level"]),
-            )
-            state["selected_level"] = level_choice
-        else:
-            state["selected_level"] = Level.SHALLOW.value
-
-        col1, col2 = st.columns(2)
-        if col1.button("Back", key="level_back"):
-            state["step"] = "theme_mode"
-            common.rerun()
-        if col2.button("Next", key="level_next"):
-            state["step"] = "language"
             common.rerun()
 
     def _render_language(self) -> None:
@@ -308,7 +183,8 @@ class HostFlow:
 
         col1, col2 = st.columns(2)
         if col1.button("Back", key="language_back"):
-            state["step"] = "level_mode"
+            back_target = "existing_room_decision" if state.get("existing_room_code") else "room_name"
+            state["step"] = back_target
             common.rerun()
         if col2.button("Next", key="language_next"):
             settings = self._build_room_settings(state)
@@ -349,10 +225,8 @@ class HostFlow:
             common.rerun()
             return
 
-        # Auto-refresh while waiting in the lobby so players and settings stay in sync.
         st_autorefresh(interval=1000, key=f"host_lobby_autorefresh_{room.room_code}")
 
-        host_player = next((player for player in room.players if player.player_id == room.host_id), None)
         st.session_state["player_profile"] = {
             "player_id": room.host_id,
             "room_code": room.room_code,
@@ -362,32 +236,17 @@ class HostFlow:
         st.markdown("### Connected players")
         with st.container(border=True):
             for player in room.players:
-                suffix = " (Host)" if player.role.value == "host" else ""
+                suffix = " (Host)" if player.role == PlayerRole.HOST else ""
                 st.write(f"- {player.name}{suffix}")
 
         st.markdown("### Game settings")
         with st.container(border=True):
-            col_mode, col_score = st.columns(2)
-            with col_mode:
-                selected_mode = st.radio(
-                    "Gameplay mode",
-                    options=[GameplayMode.SIMPLE.value, GameplayMode.BLUFFING.value],
-                    format_func=lambda value: value.title(),
-                    index=0 if room.settings.gameplay_mode == GameplayMode.SIMPLE else 1,
-                    key="host_lobby_gameplay_mode",
-                )
-            with col_score:
-                score = st.number_input(
-                    "Max score",
-                    min_value=1,
-                    value=int(room.settings.max_score),
-                    key="host_lobby_max_score",
-                )
-
-            if selected_mode != room.settings.gameplay_mode.value:
-                self.room_service.adjust_gameplay_mode(room, GameplayMode(selected_mode))
-                common.rerun()
-                return
+            score = st.number_input(
+                "Max score",
+                min_value=1,
+                value=int(room.settings.max_score),
+                key="host_lobby_max_score",
+            )
 
             if int(score) != room.settings.max_score:
                 self.room_service.update_max_score(room, int(score))
@@ -412,9 +271,9 @@ class HostFlow:
             else:
                 st.caption("No players to remove.")
 
-        can_start = len(room.players) >= 2
+        can_start = len(room.players) >= 3
         if not can_start:
-            st.warning("At least two players are required to start the game.")
+            st.warning("At least three players are required to start the game.")
         else:
             if st.button("Start game"):
                 try:
@@ -437,23 +296,9 @@ class HostFlow:
             common.rerun()
 
     def _build_room_settings(self, state: Dict[str, object]) -> RoomSettings:
-        theme_mode = ThemeMode(state["theme_mode"])
-        level_mode = LevelMode(state["level_mode"])
-        selected_themes = state["selected_themes"] if theme_mode == ThemeMode.STATIC else []
-        full_theme_list = list(selected_themes)
-        if theme_mode == ThemeMode.STATIC:
-            custom = [theme for theme in state["custom_themes"] if theme not in full_theme_list]
-            full_theme_list.extend(custom)
-        selected_level = Level(state["selected_level"]) if level_mode == LevelMode.STATIC else None
         existing_room = self._get_existing_room() if state["editing_existing"] else None
-        gameplay_mode = existing_room.settings.gameplay_mode if existing_room else GameplayMode.SIMPLE
         max_score = existing_room.settings.max_score if existing_room else 100
         return RoomSettings(
-            theme_mode=theme_mode,
-            selected_themes=full_theme_list if theme_mode == ThemeMode.STATIC else [],
-            level_mode=level_mode,
-            selected_level=selected_level,
-            gameplay_mode=gameplay_mode,
             max_score=max_score,
             language=state.get("language", "en"),
             llm_model=state.get("llm_model", "gemini-2.5-flash"),

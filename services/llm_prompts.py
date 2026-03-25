@@ -14,7 +14,7 @@ GAME_RULES_SUMMARY = """
 "Who Gets You?" is a multiplayer storytelling party game about how well friends understand one another.
 
 - The goal: tell a true, first-person mini-story, then see who can spot the truth.
-- Themes are life areas (e.g., childhood, travel, work). Levels are depth: Shallow, Medium, Deep. Deeper rounds mean more points.
+- Themes are life areas (e.g., childhood, travel, work). Levels are depth: Shallow or Deep. Deeper rounds mean more points.
 - The vibe: warm, playful, sometimes funny. Aim for “specific and relatable".
 
 Each round:
@@ -39,7 +39,6 @@ Tone rules for you (the AI):
 
 LEVEL_DESCRIPTIONS = {
     "shallow": "Light, ice-breaker territory. Situational facts or quick reflections that anyone can answer without over-sharing.",
-    "medium": "Thoughtful but comfortable. Encourages short stories or opinions that reveal personality and values.",
     "deep": "Introspective and emotionally aware. Invites vulnerability, formative memories, or personal growth moments while staying respectful.",
 }
 
@@ -56,16 +55,6 @@ DEEP_VARIETY_FRAMES = [
     "Explore a regret or near-miss that still tugs at them—what does it reveal about who they hoped to be?",
     "Ask them to revisit a promise they couldn't keep and what that unfinished thread teaches them now.",
     "Ask about their role related to the theme: who they become and how they tend to show up when this part of life is at stake.",
-]
-
-MEDIUM_VARIETY_FRAMES = [
-    "Ask them to share a short story about a memorable 'middle chapter'—not day-one, not the finale, but somewhere in between.",
-    "Use a gentle comparison: how did their approach to this theme change from five years ago to now?",
-    "Prompt a moment of advice to a close friend facing something similar, keeping it practical and heartfelt.",
-    "Encourage them to describe a routine, playlist, or environment they rely on when this theme pops up.",
-    "Ask for their opinion on a common assumption tied to the theme and how their experience affirms or challenges it.",
-    "Invite them to share a mild regret or do-over they'd accept if it helped someone else feel seen.",
-    "Ask whether they've faced any recent difficulties or challenges related to the theme, and what they learned from them.",
 ]
 
 SYSTEM_PROMPT = f"""You are the narrative director for the party game "Who Gets You?". \
@@ -92,8 +81,6 @@ def build_question_prompt(theme: str, level: str, previous_questions: Iterable[s
     level_lower = (level or "").lower()
     if level_lower == "shallow":
         variety_frame_text = "Keep it light and welcoming; make it easy to answer."
-    elif level_lower == "medium":
-        variety_frame_text = random.choice(MEDIUM_VARIETY_FRAMES)
     else:
         variety_frame_text = random.choice(DEEP_VARIETY_FRAMES)
     history_guardrail = (
@@ -263,6 +250,29 @@ def build_rephrase_prompt(
     )
 
 
+def build_duplicate_answer_check_prompt(
+    *,
+    candidate_answer: str,
+    existing_answers: Iterable[str],
+    question: str,
+    language: str,
+) -> str:
+    language_name = _language_name(language)
+    existing = [item.strip() for item in existing_answers if item and item.strip()]
+    rendered_existing = "\\n".join(f"- {item}" for item in existing) if existing else "- (none)"
+    return (
+        "You are validating answer uniqueness for a party guessing game.\\n"
+        f"Question: {question}\\n"
+        f"Candidate answer: {candidate_answer}\\n"
+        f"Existing submitted answers:\\n{rendered_existing}\\n"
+        f"Evaluate in {language_name}.\\n"
+        "Mark as duplicate when the candidate is the same meaning as any existing answer, "
+        "even if wording differs slightly.\\n"
+        "Only mark non-duplicate when it is clearly distinct in meaning.\\n"
+        "Return JSON with fields: is_duplicate (boolean), reason (short string)."
+    )
+
+
 class QuestionLLMResponse(BaseModel):
     question: str = Field(..., description="The final question text delivered to the storyteller.")
 
@@ -281,3 +291,8 @@ class MultipleChoiceOption(BaseModel):
 
 class MultipleChoiceResponse(BaseModel):
     options: List[MultipleChoiceOption]
+
+
+class DuplicateCheckResponse(BaseModel):
+    is_duplicate: bool = Field(..., description="True when candidate meaning duplicates an existing answer.")
+    reason: str = Field(default="", description="Short reason for the duplicate/non-duplicate decision.")

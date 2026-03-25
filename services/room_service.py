@@ -9,13 +9,10 @@ from datetime import datetime
 from typing import List, Optional
 
 from models import (
-    GameplayMode,
-    LevelMode,
     Player,
     PlayerRole,
     Room,
     RoomSettings,
-    ThemeMode,
 )
 from storage.room_repository import RoomRepository
 
@@ -130,12 +127,6 @@ class RoomService:
                 return player
         raise PlayerNotFoundError(f"Player {player_id} does not exist in room {room.room_code}.")
 
-    def adjust_gameplay_mode(self, room: Room, gameplay_mode: GameplayMode) -> Room:
-        room.settings.gameplay_mode = gameplay_mode
-        room.update_timestamp()
-        self.repository.save(room)
-        return room
-
     def update_max_score(self, room: Room, max_score: int) -> Room:
         if max_score < 1:
             raise InvalidRoomSettingsError("Max score must be a positive number.")
@@ -173,10 +164,6 @@ class RoomService:
         )
 
     def _validate_settings(self, settings: RoomSettings) -> None:
-        if settings.theme_mode == ThemeMode.STATIC and not settings.selected_themes:
-            raise InvalidRoomSettingsError("At least one theme must be selected for static theme mode.")
-        if settings.level_mode == LevelMode.STATIC and not settings.selected_level:
-            raise InvalidRoomSettingsError("A specific level is required when level mode is static.")
         if settings.max_score < 1:
             raise InvalidRoomSettingsError("Max score must be greater than zero.")
 

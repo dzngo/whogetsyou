@@ -119,6 +119,7 @@ class Router:
         if current_model == target_model:
             return
         self.game_flow.llm_service = LLMService(llm_name=target_model)
+        self.game_flow.validation_llm_service = LLMService(llm_name=target_model)
 
 
 def run() -> None:

@@ -228,14 +228,8 @@ class JoinFlow:
         current_host_state.setdefault("room_name", "")
         current_host_state.setdefault("existing_room_code", None)
         current_host_state.setdefault("editing_existing", False)
-        current_host_state.setdefault("theme_mode", "dynamic")
-        current_host_state.setdefault("selected_themes", [])
-        current_host_state.setdefault("custom_themes", [])
-        current_host_state.setdefault("level_mode", "dynamic")
-        current_host_state.setdefault("selected_level", "shallow")
         current_host_state.setdefault("language", "en")
         current_host_state.setdefault("llm_model", "gemini-2.5-flash")
-        current_host_state.setdefault("clear_custom_theme_input", False)
         current_host_state["step"] = "lobby"
         current_host_state["host_name"] = host_name
         current_host_state["room_code"] = room_code
