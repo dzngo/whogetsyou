@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 from models import DEFAULT_THEMES, Level
 from services.llm_loader import get_llm
@@ -173,25 +173,3 @@ class LLMService:
             },
         ]
         return self._llm.complete_text(messages).strip()
-
-    def check_duplicate_answer(
-        self,
-        *,
-        candidate_answer: str,
-        existing_answers: Iterable[str],
-        question: str,
-        language: str = "en",
-    ) -> llm_prompts.DuplicateCheckResponse:
-        messages = [
-            {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": llm_prompts.build_duplicate_answer_check_prompt(
-                    candidate_answer=candidate_answer,
-                    existing_answers=existing_answers,
-                    question=question,
-                    language=language,
-                ),
-            },
-        ]
-        return self._llm.parse_structured(messages, llm_prompts.DuplicateCheckResponse)

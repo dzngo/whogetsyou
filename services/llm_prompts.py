@@ -250,29 +250,6 @@ def build_rephrase_prompt(
     )
 
 
-def build_duplicate_answer_check_prompt(
-    *,
-    candidate_answer: str,
-    existing_answers: Iterable[str],
-    question: str,
-    language: str,
-) -> str:
-    language_name = _language_name(language)
-    existing = [item.strip() for item in existing_answers if item and item.strip()]
-    rendered_existing = "\\n".join(f"- {item}" for item in existing) if existing else "- (none)"
-    return (
-        "You are validating answer uniqueness for a party guessing game.\\n"
-        f"Question: {question}\\n"
-        f"Candidate answer: {candidate_answer}\\n"
-        f"Existing submitted answers:\\n{rendered_existing}\\n"
-        f"Evaluate in {language_name}.\\n"
-        "Mark as duplicate when the candidate is the same meaning as any existing answer, "
-        "even if wording differs slightly.\\n"
-        "Only mark non-duplicate when it is clearly distinct in meaning.\\n"
-        "Return JSON with fields: is_duplicate (boolean), reason (short string)."
-    )
-
-
 class QuestionLLMResponse(BaseModel):
     question: str = Field(..., description="The final question text delivered to the storyteller.")
 
@@ -291,8 +268,3 @@ class MultipleChoiceOption(BaseModel):
 
 class MultipleChoiceResponse(BaseModel):
     options: List[MultipleChoiceOption]
-
-
-class DuplicateCheckResponse(BaseModel):
-    is_duplicate: bool = Field(..., description="True when candidate meaning duplicates an existing answer.")
-    reason: str = Field(default="", description="Short reason for the duplicate/non-duplicate decision.")

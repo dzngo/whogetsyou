@@ -27,8 +27,6 @@ class GameFlow:
         self.room_service = room_service
         self.game_service = game_service
         self.llm_service = llm_service
-        model_name = getattr(getattr(llm_service, "_llm", None), "model_name", "gemini-2.5-flash")
-        self.validation_llm_service = LLMService(llm_name=model_name)
 
     def render(self) -> None:
         room_code = st.session_state.get("active_room_code")
@@ -782,22 +780,12 @@ class GameFlow:
         question: str,
         language: str,
     ) -> bool:
+        del question, language
         if not existing_answers:
             return False
         normalized_candidate = self._normalize_answer(candidate)
         normalized_existing = {self._normalize_answer(item) for item in existing_answers}
-        if normalized_candidate in normalized_existing:
-            return True
-        try:
-            resp = self.validation_llm_service.check_duplicate_answer(
-                candidate_answer=candidate,
-                existing_answers=existing_answers,
-                question=question,
-                language=language,
-            )
-            return bool(resp.is_duplicate)
-        except Exception:
-            return False
+        return normalized_candidate in normalized_existing
 
     @staticmethod
     def _normalize_answer(value: str) -> str:
