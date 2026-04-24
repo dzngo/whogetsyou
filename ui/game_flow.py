@@ -491,7 +491,12 @@ class GameFlow:
 
         remaining_count = max(len(listeners) - len(guesses), 0)
         if remaining_count > 0:
-            st.caption(f"Still waiting for {remaining_count} listener(s).")
+            pending_names = [
+                player.name
+                for player in listeners
+                if player.player_id not in guesses
+            ]
+            st.caption(f"Still waiting for {remaining_count} listener(s): {', '.join(pending_names)}")
         else:
             state["phase"] = "reveal"
             self._save_state(room, state)
