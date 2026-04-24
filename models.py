@@ -1,7 +1,5 @@
 """Core dataclasses and enums representing the Who Gets You pre-game domain."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
