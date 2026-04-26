@@ -355,7 +355,6 @@ class GameFlow:
                     resp = self.llm_service.suggest_answer(
                         question=question,
                         storyteller_name=current_player_label,
-                        gameplay_mode="simple",
                         language=room.settings.language,
                         theme=self._current_theme(state),
                     )

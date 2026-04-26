@@ -28,26 +28,79 @@ DEFAULT_THEMES: List[str] = [
     "Travel ✈️",
 ]
 
-THEME_DESCRIPTIONS: Dict[str, str] = {
-    "Yourself 🌱": "Self-awareness, snapshots from personal daily life, facts about you, your interests, how you understand yourself, "
-    "identity shifts, self-talk, and micro-habits that reveal who you are.",
-    "Childhood 👶": "Memories, lessons, and stories from your early years or upbringing that cover family dynamics, formative friendships, "
-    "caretakers, and big kid feelings.",
-    "Family 🏡": "Experiences with family members, easy moments, the support, the messy parts too, plus traditions, conflict repair, "
-    "generational expectations, and how you set boundaries,facts about specific family members, facts about you within your family role, "
-    "and the little quirks that define your home life.",
-    "Goals ✨": "Dreams you're actively pursuing and milestones you want to reach, including career leaps,"
-    " health quests, creative ambitions, and bucket-list experiments.",
-    "Work 💼": "Professional life including coworkers, relationships with managers, how you show up on the job, and challenges at "
-    "work—dive into team dynamics, promotions, burnout recovery, and leadership style.",
-    "Love 💖": "Romantic relationships, intimacy, how you show love to a partner, dating history, love languages, green/red flags, "
-    "communication styles, conflict repair, and what you want next (commitment, freedom, stability, adventure) or fact about your partner",
-    "Friends 🤝": "Friendship stories (old or new), chosen family moments, and the support you get or give alongside how you met, "
-    "inside jokes, fun facts about your friends, loyalty tests, boundaries, rituals of care, and long-distance bonds.",
-    "Hobbies 🎨": "Passions, creative outlets, and how you unwind or express yourself by talking through learning curves, the "
-    "communities around your craft, resources you lean on, and dream collaborations.",
-    "Travel ✈️": "Journeys, discoveries, and how exploring reshapes your worldview with space for planning quirks, culture shocks,"
-    " travel buddies, and the lessons that stuck with you.",
+THEME_DESCRIPTIONS: Dict[str, List[str]] = {
+    "Yourself 🌱": [
+        "Self-awareness and identity shifts",
+        "Snapshots from your personal daily life",
+        "Facts about you and your interests",
+        "How you understand yourself",
+        "Self-talk and inner dialogue",
+        "Micro-habits that reveal who you are",
+    ],
+    "Childhood 👶": [
+        "Memories and stories from your early years",
+        "Lessons from your upbringing",
+        "Family dynamics when you were growing up",
+        "Formative childhood friendships",
+        "Caretakers and their impact on you",
+        "Big feelings from kid years",
+    ],
+    "Family 🏡": [
+        "Experiences with family members",
+        "Warm and messy family moments",
+        "Traditions and rituals at home",
+        "Conflict and repair in family life",
+        "Generational expectations and boundaries",
+        "Quirks that define your home life",
+    ],
+    "Goals ✨": [
+        "Dreams you are actively pursuing",
+        "Milestones you want to reach",
+        "Career leaps you are aiming for",
+        "Health goals and personal growth quests",
+        "Creative ambitions",
+        "Bucket-list experiments",
+    ],
+    "Work 💼": [
+        "How you show up professionally",
+        "Coworker and manager relationships",
+        "Team dynamics and collaboration",
+        "Challenges and pressure at work",
+        "Leadership style and growth",
+        "Promotion or burnout recovery stories",
+    ],
+    "Love 💖": [
+        "Romantic relationships and intimacy",
+        "How you show love to a partner",
+        "Dating history and patterns",
+        "Love languages and communication styles",
+        "Conflict repair in relationships",
+        "What you want next in love",
+    ],
+    "Friends 🤝": [
+        "Friendship stories old and new",
+        "Chosen-family moments",
+        "How you support and are supported",
+        "Inside jokes and shared rituals",
+        "Boundaries and loyalty in friendships",
+        "Long-distance friendship dynamics",
+    ],
+    "Hobbies 🎨": [
+        "Passions and creative outlets",
+        "How you unwind and recharge",
+        "Learning curves in your craft",
+        "Communities around your hobbies",
+        "Resources you lean on to improve",
+        "Dream collaborations",
+    ],
+    "Travel ✈️": [
+        "Journeys and discoveries",
+        "Culture shocks and perspective shifts",
+        "Planning quirks and travel style",
+        "Travel buddies and group dynamics",
+        "Memorable moments from trips",
+        "Lessons that stayed with you",
+    ],
 }
 
 SUPPORTED_LANGUAGES: Dict[str, str] = {

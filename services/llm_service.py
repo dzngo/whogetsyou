@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from models import DEFAULT_THEMES, Level
 from services.llm_loader import get_llm
@@ -65,7 +65,6 @@ class LLMService:
         self,
         question: str,
         storyteller_name: str,
-        gameplay_mode: str,
         *,
         language: str = "en",
         theme: str = "",
@@ -77,7 +76,6 @@ class LLMService:
                 "content": llm_prompts.build_answer_prompt(
                     question,
                     storyteller_name=storyteller_name,
-                    gameplay_mode=gameplay_mode,
                     language=language,
                     theme=theme,
                 ),
@@ -92,60 +90,6 @@ class LLMService:
 
         fallback_text = self._llm.complete_text(messages).strip()
         return llm_prompts.AnswerSuggestionResponse(answer=fallback_text)
-
-    def build_multiple_choice(
-        self,
-        question: str,
-        true_answer: str,
-        level: Level,
-        trap_answer: Optional[str] = None,
-        num_distractors: int = 2,
-        language: str = "en",
-        theme: str = "",
-    ) -> llm_prompts.MultipleChoiceResponse:
-        messages = [
-            {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": llm_prompts.build_multiple_choice_prompt(
-                    question=question,
-                    true_answer=true_answer,
-                    trap_answer=trap_answer,
-                    level=level.value,
-                    num_distractors=num_distractors,
-                    language=language,
-                    theme=theme,
-                ),
-            },
-        ]
-        return self._llm.parse_structured(messages, llm_prompts.MultipleChoiceResponse)
-
-    def refine_option_text(
-        self,
-        question: str,
-        true_answer: str,
-        kind: str,
-        current_text: str,
-        trap_answer: Optional[str] = None,
-        language: str = "en",
-    ) -> str:
-        """Ask the LLM to rewrite a single option text."""
-        messages = [
-            {"role": "system", "content": llm_prompts.SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": llm_prompts.build_option_refine_prompt(
-                    question=question,
-                    true_answer=true_answer,
-                    trap_answer=trap_answer,
-                    kind=kind,
-                    current_text=current_text,
-                    language=language,
-                ),
-            },
-        ]
-        text = self._llm.complete_text(messages)
-        return text.strip()
 
     def rephrase_text(
         self,
