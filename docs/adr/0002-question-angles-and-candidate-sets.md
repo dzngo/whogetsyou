@@ -1,0 +1,3 @@
+# Use curated Question Angles and ranked Candidate Sets for question generation
+
+Question quality suffered when prompt-only generation repeatedly chose the same semantic area, such as food, snacks, coffee, lunch, and dessert for Random Shallow questions. We decided to use a curated Question Angle Catalog per Theme and Level, select angles in code with recent-angle exclusion, and ask one LLM call to generate a ranked Candidate Set with one question per selected angle. Gameplay shows one candidate at a time and advances through the set on Change question, while evals show the full set so reviewers can judge diversity, ranking, and per-candidate quality.

@@ -1,0 +1,16 @@
+[project]
+name = "whogetsyou"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "gspread==6.0.0",
+    "oauth2client>=4.1.3",
+    "openai>=1.51.0",
+    "python-dotenv==1.0.1",
+    "redis>=7.4.0",
+    "streamlit==1.44.1",
+    "streamlit-autorefresh==1.0.1",
+    "streamlit-tags==1.2.8",
+]
