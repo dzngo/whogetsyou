@@ -39,6 +39,7 @@ class HostFlow:
             "step": "host_name",
             "host_name": "",
             "room_name": "",
+            "is_private": False,
             "room_code": None,
             "existing_room_code": None,
             "editing_existing": False,
@@ -94,8 +95,15 @@ class HostFlow:
 
     def _render_room_name(self) -> None:
         state = self.state
-        st.subheader("Room name")
+        st.subheader("Room setup")
         name = st.text_input("Room name", value=state["room_name"])
+        is_private = st.checkbox("Private room", value=bool(state.get("is_private", False)))
+        help_text = (
+            "Guests will see a random room code in the room list."
+            if is_private
+            else "Guests will see the room name directly in the room list."
+        )
+        st.caption(help_text)
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
             state["step"] = "host_name"
@@ -106,6 +114,7 @@ class HostFlow:
                 st.error("Please enter a room name.")
                 return
             state["room_name"] = cleaned
+            state["is_private"] = is_private
             existing = self.room_service.get_room_by_name(cleaned)
             if existing:
                 state["existing_room_code"] = existing.room_code
@@ -200,6 +209,7 @@ class HostFlow:
                         room,
                         state["host_name"],
                         settings,
+                        is_private=bool(state.get("is_private", False)),
                     )
                     state["room_code"] = updated.room_code
                 else:
@@ -207,6 +217,7 @@ class HostFlow:
                         state["host_name"],
                         state["room_name"],
                         settings,
+                        is_private=bool(state.get("is_private", False)),
                     )
                     state["room_code"] = room.room_code
             except InvalidRoomSettingsError as exc:

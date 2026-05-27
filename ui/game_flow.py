@@ -258,14 +258,16 @@ class GameFlow:
             st.session_state[manual_key] = st.session_state.pop(prefill_key)
 
         if not question_data:
-            if self._prepare_question(room, state, prefill_key, notify=False):
-                return
+            with st.spinner("Processing question ..."):
+                if self._prepare_question(room, state, prefill_key, notify=False):
+                    return
 
         manual_value = st.text_area("Edit question", key=manual_key)
         action_col1, action_col2 = st.columns(2)
         if action_col1.button("Change question", key=f"{room.room_code}_question_change"):
-            if self._prepare_question(room, state, prefill_key, notify=True, force=True):
-                return
+            with st.spinner("Processing question ..."):
+                if self._prepare_question(room, state, prefill_key, notify=True, force=True):
+                    return
         if action_col2.button("Rephrase question", key=f"{room.room_code}_question_rephrase"):
             cleaned = manual_value.strip()
             if not cleaned:
@@ -292,13 +294,33 @@ class GameFlow:
             if not final_question:
                 st.error("Please enter a question.")
                 return
-            state["question"] = {"question": final_question}
+            if room.settings.language.lower() == "en":
+                final_question_en = final_question
+            else:
+                try:
+                    with st.spinner("Saving canonical question..."):
+                        translation_trace = self.llm_service.translate_text_with_trace(
+                            final_question,
+                            source_language=room.settings.language,
+                            target_language="en",
+                        )
+                        if translation_trace["error"]:
+                            raise RuntimeError(translation_trace["error"])
+                        final_question_en = translation_trace["text"]
+                except Exception as exc:
+                    st.error(f"Content service error: {exc}")
+                    return
+            current_question_data = state.get("question") or {}
+            state["question"] = {
+                "question": final_question,
+                "question_en": final_question_en,
+                "angle_key": current_question_data.get("angle_key", ""),
+                "candidate_rank": current_question_data.get("candidate_rank", 0),
+            }
             history_container = state.setdefault("question_history", {})
-            if isinstance(history_container, list):
-                history_container = {"__legacy__": history_container}
-                state["question_history"] = history_container
             history_key = f"{current_theme}::{current_level}"
-            history_container.setdefault(history_key, []).append(final_question)
+            if final_question_en not in history_container.setdefault(history_key, []):
+                history_container[history_key].append(final_question_en)
             state["phase"] = "answer_entry"
             self._save_state(room, state)
 
@@ -336,9 +358,9 @@ class GameFlow:
             st.session_state[input_key] = st.session_state.pop(prefill_key)
 
         if current_player_id == storyteller_id:
-            st.caption("You are the Storyteller. Submit your true answer.")
+            st.caption("You are the Storyteller. Submit your answer.")
         else:
-            st.caption("Submit one plausible answer. Do not reveal if it is true or not.")
+            st.caption("Submit one plausible answer. Do not reveal whether it is yours.")
 
         st.text_area("Your answer", key=input_key)
 
@@ -357,6 +379,8 @@ class GameFlow:
                         storyteller_name=current_player_label,
                         language=room.settings.language,
                         theme=self._current_theme(state),
+                        level=current_level,
+                        question_en=(state.get("question") or {}).get("question_en", question),
                     )
                     suggestion = (resp.answer or "").strip()
                     if not suggestion:
@@ -445,7 +469,7 @@ class GameFlow:
         current_player_id: Optional[str],
         is_host: bool,
     ) -> None:
-        st.subheader("Guess the storyteller's true answer")
+        st.subheader("Guess the Storyteller answer")
         question = (state.get("question") or {}).get("question", "")
         with st.container(border=True):
             st.markdown(f"**Question:** {question}")
@@ -474,7 +498,7 @@ class GameFlow:
                 st.info("Waiting for other listeners to submit...")
             else:
                 selection_display = st.radio(
-                    "Choose the storyteller's true answer",
+                    "Choose the Storyteller answer",
                     options=option_display,
                     index=0,
                     key=f"{room.room_code}_guess_select",
@@ -739,37 +763,101 @@ class GameFlow:
         if not force and state.get("question_autogen_attempted"):
             return False
         state["question_autogen_attempted"] = True
-        history_map = state.get("question_history") or {}
-        if isinstance(history_map, list):
-            history_map = {"__legacy__": history_map}
-            state["question_history"] = history_map
         theme = state.get("selected_theme") or "General"
         level_value = state.get("selected_level", Level.SHALLOW.value)
         history_key = f"{theme}::{level_value}"
+        candidates = list(state.get("question_candidates") or [])
+        current_index = int(state.get("current_candidate_index", 0))
+
+        if force and candidates and current_index < len(candidates) - 1:
+            next_index = current_index + 1
+            if self._set_current_question_from_candidate(room, state, prefill_key, candidates[next_index], next_index):
+                if notify:
+                    st.success("Question updated.")
+                self._save_state(room, state)
+                return True
+            return False
+
+        history_map = state.setdefault("question_history", {})
+        angle_history_map = state.setdefault("angle_history", {})
         previous_questions = (history_map.get(history_key) or [])[-50:]
+        previous_angles = (angle_history_map.get(history_key) or [])[-50:]
         try:
-            with st.spinner("Preparing a fresh question..."):
-                resp = self.llm_service.generate_question(
-                    theme=theme,
-                    level=Level(level_value),
-                    previous_questions=previous_questions,
-                    language=room.settings.language,
-                )
+            candidate_set = self.llm_service.generate_question_candidate_set_with_trace(
+                theme=theme,
+                level=Level(level_value),
+                previous_questions=previous_questions,
+                angle_history=previous_angles,
+            )
         except Exception as exc:
             self.game_service.set_state(room, state)
             st.error(f"Content service error: {exc}")
             return False
-        payload = resp.model_dump()
-        state["question"] = payload
+
+        new_candidates = [
+            {
+                "rank": candidate.rank,
+                "angle_key": candidate.angle_key,
+                "question_en": candidate.question_en,
+            }
+            for candidate in candidate_set.candidates
+        ]
+        if not new_candidates:
+            st.error("Content service error: no question was generated.")
+            return False
+        if not self._set_current_question_from_candidate(room, state, prefill_key, new_candidates[0], 0):
+            return False
+
+        state["question_candidates"] = new_candidates
+        state["current_candidate_index"] = 0
         history_container = state.setdefault("question_history", {})
-        if isinstance(history_container, list):
-            history_container = {"__legacy__": history_container}
-            state["question_history"] = history_container
-        history_container.setdefault(history_key, []).append(payload["question"])
-        st.session_state[prefill_key] = payload["question"]
+        angle_history_container = state.setdefault("angle_history", {})
+        question_items = history_container.setdefault(history_key, [])
+        for candidate in new_candidates:
+            question_en = candidate.get("question_en", "")
+            if question_en and question_en not in question_items:
+                question_items.append(question_en)
+        angle_history_container.setdefault(history_key, []).extend(candidate_set.selected_angle_keys)
         if notify:
             st.success("Question updated.")
         self._save_state(room, state)
+        return True
+
+    def _set_current_question_from_candidate(
+        self,
+        room: Room,
+        state: Dict[str, object],
+        prefill_key: str,
+        candidate: Dict[str, object],
+        candidate_index: int,
+    ) -> bool:
+        question_en = str(candidate.get("question_en") or "").strip()
+        if not question_en:
+            st.error("Content service error: question is empty.")
+            return False
+        try:
+            if room.settings.language.lower() == "en":
+                display_question = question_en
+            else:
+                translation_trace = self.llm_service.translate_text_with_trace(
+                    question_en,
+                    source_language="en",
+                    target_language=room.settings.language,
+                )
+                if translation_trace["error"]:
+                    raise RuntimeError(translation_trace["error"])
+                display_question = translation_trace["text"]
+        except Exception as exc:
+            st.error(f"Content service error: {exc}")
+            return False
+        state["question"] = {
+            "question": display_question,
+            "question_en": question_en,
+            "angle_key": candidate.get("angle_key", ""),
+            "candidate_rank": candidate.get("rank", 0),
+        }
+        state["current_candidate_index"] = candidate_index
+        st.session_state[prefill_key] = display_question
         return True
 
     def _save_state(self, room: Room, state: Dict[str, object]) -> None:

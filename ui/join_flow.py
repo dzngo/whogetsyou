@@ -20,10 +20,9 @@ class JoinFlow:
     @staticmethod
     def _default_state() -> Dict[str, object]:
         return {
-            "step": "room_code",
+            "step": "room_list",
             "player_name": "",
             "player_id": None,
-            "room_code_input": "",
             "candidate_room_code": None,
             "joined_room_code": None,
             "selected_player_id": None,
@@ -38,8 +37,8 @@ class JoinFlow:
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "room_code":
-            self._render_room_code()
+        if step == "room_list":
+            self._render_room_list()
         elif step == "player_name":
             self._render_player_name()
         elif step == "reclaim_player":
@@ -51,32 +50,48 @@ class JoinFlow:
             self.reset()
             common.rerun()
 
-    def _render_room_code(self) -> None:
+    def _render_room_list(self) -> None:
         state = self.state
-        st.subheader("Enter room code")
-        room_code = st.text_input("Room code", value=state["room_code_input"])
-        col1, col2 = st.columns(2)
-        if col1.button("Back", key="room_code_back"):
+        st.subheader("Choose a room")
+        rooms = sorted(
+            self.room_service.list_rooms(),
+            key=lambda room: (room.started, room.updated_at),
+            reverse=True,
+        )
+        if not rooms:
+            st.info("No rooms are available yet.")
+            col1, col2 = st.columns(2)
+            if col1.button("Back", key="room_list_back_empty"):
+                self.reset()
+                st.session_state["route"] = "entry"
+                common.rerun()
+            if col2.button("Refresh", key="room_list_refresh_empty"):
+                common.rerun()
+            return
+
+        room_options = {room.room_code: room for room in rooms}
+        selected_room_code = st.selectbox(
+            "Available rooms",
+            options=list(room_options.keys()),
+            format_func=lambda code: self._format_room_option(room_options[code]),
+        )
+        selected_room = room_options[selected_room_code]
+        common.show_room_summary(selected_room)
+
+        col1, col2, col3 = st.columns(3)
+        if col1.button("Back", key="room_list_back"):
             self.reset()
             st.session_state["route"] = "entry"
             common.rerun()
-        if col2.button("Join room", key="room_code_next"):
-            cleaned = room_code.strip().upper()
-            if not cleaned:
-                st.error("Please enter a room code.")
-                return
-            state["room_code_input"] = cleaned
-            room = self.room_service.get_room_by_code(cleaned)
-            if not room:
-                st.error("Couldn't find any room with that code.")
-                return
-            if room.started:
-                state["candidate_room_code"] = cleaned
+        if col2.button("Refresh", key="room_list_refresh"):
+            common.rerun()
+        if col3.button("Join room", key="room_list_next"):
+            state["candidate_room_code"] = selected_room_code
+            if selected_room.started:
                 state["selected_player_id"] = None
                 state["step"] = "reclaim_player"
                 common.rerun()
                 return
-            state["candidate_room_code"] = cleaned
             state["step"] = "player_name"
             common.rerun()
 
@@ -86,7 +101,7 @@ class JoinFlow:
         room = self.room_service.get_room_by_code(room_code) if room_code else None
         if not room:
             st.warning("Room was closed or no longer exists.")
-            state["step"] = "room_code"
+            state["step"] = "room_list"
             state["candidate_room_code"] = None
             common.rerun()
             return
@@ -99,7 +114,7 @@ class JoinFlow:
         player_name = st.text_input("Player name", value=state["player_name"])
         col1, col2 = st.columns(2)
         if col1.button("Back", key="player_name_back"):
-            state["step"] = "room_code"
+            state["step"] = "room_list"
             common.rerun()
         if col2.button("Join room", key="player_name_join"):
             cleaned_name = player_name.strip()
@@ -132,7 +147,7 @@ class JoinFlow:
         room = self.room_service.get_room_by_code(room_code) if room_code else None
         if not room:
             st.warning("Room was closed or no longer exists.")
-            state["step"] = "room_code"
+            state["step"] = "room_list"
             state["candidate_room_code"] = None
             common.rerun()
             return
@@ -143,7 +158,7 @@ class JoinFlow:
         if not room.players:
             st.warning("No players found in this room.")
             if st.button("Back", key="reclaim_empty_back"):
-                state["step"] = "room_code"
+                state["step"] = "room_list"
                 common.rerun()
             return
 
@@ -160,7 +175,7 @@ class JoinFlow:
 
         col1, col2 = st.columns(2)
         if col1.button("Back", key="reclaim_back"):
-            state["step"] = "room_code"
+            state["step"] = "room_list"
             state["selected_player_id"] = None
             common.rerun()
         if col2.button("Resume game", key="reclaim_confirm"):
@@ -186,7 +201,7 @@ class JoinFlow:
         room = self._load_joined_room()
         if not room:
             st.warning("Room was closed by the host.")
-            state["step"] = "room_code"
+            state["step"] = "room_list"
             state["joined_room_code"] = None
             state["player_id"] = None
             common.rerun()
@@ -210,8 +225,7 @@ class JoinFlow:
             common.rerun()
         if col2.button("Change room", key="join_lobby_change"):
             self._leave_current_room()
-            state["step"] = "room_code"
-            state["room_code_input"] = ""
+            state["step"] = "room_list"
             state["candidate_room_code"] = None
             common.rerun()
 
@@ -250,3 +264,9 @@ class JoinFlow:
         st.session_state.pop("player_profile", None)
         if st.session_state.get("active_room_code") == room_code:
             st.session_state.pop("active_room_code", None)
+
+    def _format_room_option(self, room) -> str:
+        join_label = common.room_join_label(room)
+        visibility = "Private" if room.is_private else "Public"
+        status = "In game" if room.started else "Lobby"
+        return f"{join_label} | {visibility} | {status} | {len(room.players)} players"

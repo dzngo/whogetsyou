@@ -57,7 +57,10 @@ class GameService:
             "selected_level": None,
             "question": None,
             "question_autogen_attempted": False,
+            "question_candidates": [],
+            "current_candidate_index": 0,
             "question_history": {},
+            "angle_history": {},
             "answer_submissions": {},
             "multiple_choice": {"options": []},
             "listener_guesses": {},
@@ -84,6 +87,8 @@ class GameService:
         state["selected_level"] = None
         state["question"] = None
         state["question_autogen_attempted"] = False
+        state["question_candidates"] = []
+        state["current_candidate_index"] = 0
         state["answer_submissions"] = {}
         state["multiple_choice"] = {"options": []}
         state["listener_guesses"] = {}

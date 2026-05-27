@@ -21,12 +21,17 @@ Each round follows this flow:
 2. **Level selection** — Storyteller picks depth: **Shallow** or **Deep**.
 3. **Question proposal** — AI suggests a question; Storyteller can edit, regenerate, rephrase, then confirm.
 4. **Answer entry** —
-   - Storyteller submits the true answer.
+   - Storyteller submits the Storyteller answer.
    - Each listener submits one plausible answer.
    - Duplicate answers are blocked using exact-match checks.
-5. **Guessing** — All listeners see the full answer list and guess which one is the Storyteller’s true answer.
-6. **Reveal & scoring** — True answer is revealed, listener guesses are shown, points are applied.
+5. **Guessing** — All listeners see the full answer list and guess which one is the Storyteller answer.
+6. **Reveal & scoring** — Storyteller answer is revealed, listener guesses are shown, points are applied.
 7. **Rotation** — If no winner yet, next Storyteller starts the next round.
+
+Question styles:
+- **Shallow**: funny, quick, low-pressure prompts built around playful hypotheticals, silly choices, or imagined situations.
+- **Deep**: reflective, emotionally safe prompts that invite a personally true answer.
+- **Random 🎲**: wildcard theme for surprising questions.
 
 ### 1.4 Scoring Details
 Depth multiplier:
@@ -90,6 +95,6 @@ Phases:
 2. **Level Selection** — Storyteller only (Shallow/Deep)
 3. **Question Proposal** — Storyteller can edit/regenerate/rephrase/confirm
 4. **Answer Entry** — Every player submits one answer; no author names shown here
-5. **Guessing** — Listeners guess the true answer from all submitted answers
-6. **Reveal & Scoring** — Show true answer, listener guesses, and per-round point deltas
+5. **Guessing** — Listeners guess the Storyteller answer from all submitted answers
+6. **Reveal & Scoring** — Show Storyteller answer, listener guesses, and per-round point deltas
 7. **Results** — Final scoreboard and winners

@@ -53,7 +53,14 @@ class RoomService:
             return None
         return self.repository.get_by_name(name)
 
-    def create_room(self, host_name: str, room_name: str, settings: RoomSettings) -> Room:
+    def create_room(
+        self,
+        host_name: str,
+        room_name: str,
+        settings: RoomSettings,
+        *,
+        is_private: bool,
+    ) -> Room:
         """Creates a completely new room with the provided configuration."""
         self._validate_settings(settings)
         now = datetime.utcnow()
@@ -61,6 +68,7 @@ class RoomService:
         room = Room(
             room_code=self._generate_room_code(),
             name=room_name.strip(),
+            is_private=is_private,
             host_id=host_player.player_id,
             host_name=host_player.name,
             created_at=now,
@@ -83,7 +91,14 @@ class RoomService:
         self.repository.save(room)
         return room
 
-    def reconfigure_room(self, room: Room, host_name: str, settings: RoomSettings) -> Room:
+    def reconfigure_room(
+        self,
+        room: Room,
+        host_name: str,
+        settings: RoomSettings,
+        *,
+        is_private: bool,
+    ) -> Room:
         """Keeps the room code/name but overwrites settings."""
         self._validate_settings(settings)
         host_player = self._build_player(host_name, PlayerRole.HOST)
@@ -92,6 +107,7 @@ class RoomService:
         room.players = [host_player]
         room.started = False
         room.settings = settings
+        room.is_private = is_private
         room.update_timestamp()
         self.repository.save(room)
         return room

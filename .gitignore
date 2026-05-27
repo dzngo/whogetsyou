@@ -175,4 +175,5 @@ cython_debug/
 .pypirc
 
 *.csv
+evals/results/*.jsonl
 cache/

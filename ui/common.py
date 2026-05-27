@@ -39,7 +39,11 @@ def show_room_summary(room: Room, display_llm: bool = False) -> None:
     with st.container(border=True):
         columns = st.columns(2)
         with columns[0]:
-            st.write(f"**Room code:** `{room.room_code}`")
+            join_label = room.room_code if room.is_private else room.name
+            join_label_title = "Private room code" if room.is_private else "Public room name"
+            privacy_label = "Private" if room.is_private else "Public"
+            st.write(f"**Visibility:** {privacy_label}")
+            st.write(f"**{join_label_title}:** `{join_label}`")
             settings = room.settings
             st.write(f"**Max score:** {settings.max_score}")
             language_name = SUPPORTED_LANGUAGES.get(settings.language.lower(), settings.language.upper())
@@ -54,6 +58,10 @@ def show_room_summary(room: Room, display_llm: bool = False) -> None:
             st.write("**Theme selection:** Dynamic (Storyteller picks each round)")
             st.write("**Level selection:** Dynamic (Shallow/Deep)")
             st.write("**Gameplay mode:** Standard")
+
+
+def room_join_label(room: Room) -> str:
+    return room.room_code if room.is_private else room.name
 
 
 def style_buttons() -> None:
