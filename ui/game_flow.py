@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import random
 from typing import Dict, List, Optional
 
@@ -567,6 +568,7 @@ class GameFlow:
         if not state.get("round_summary"):
             summary = self._compute_scoring(room, state, storyteller_id)
             state["round_summary"] = summary
+            self._record_completed_round(room, state, storyteller_id, summary)
             self._save_state(room, state)
         else:
             summary = state["round_summary"]
@@ -619,25 +621,50 @@ class GameFlow:
                 common.rerun()
 
     def _render_results(self, room: Room, state: Dict[str, object], is_host: bool) -> None:
-        st.subheader("Final results")
         lookup = self._player_lookup(room)
+        self._inject_results_arcade_css()
         reason = state.get("end_reason")
-        if reason:
-            st.info(reason)
-
-        winners = state.get("winners", [])
-        if winners:
-            names = ", ".join(lookup[pid].name for pid in winners if pid in lookup)
-            st.success(f"Winner(s): {names}")
         scoreboard = sorted((pid, score) for pid, score in (state.get("scores") or {}).items())
         scoreboard.sort(key=lambda item: item[1], reverse=True)
-        st.markdown("### Final scoreboard")
-        with st.container(border=True):
-            for pid, score in scoreboard:
-                player = lookup.get(pid)
-                if not player:
-                    continue
-                st.write(f"- {player.name}: **{score}**")
+
+        winners = state.get("winners", [])
+        winner_names = [lookup[pid].name for pid in winners if pid in lookup]
+        if not winner_names and scoreboard:
+            top_score = scoreboard[0][1]
+            winner_names = [lookup[pid].name for pid, score in scoreboard if score == top_score and pid in lookup]
+
+        reason_html = f"<div class='wg-results-reason'>{html.escape(str(reason))}</div>" if reason else ""
+        champion_label = "Champions" if len(winner_names) > 1 else "Champion"
+        champion_names = " + ".join(html.escape(name) for name in winner_names) if winner_names else "No winner"
+        champion_score = max((score for _, score in scoreboard), default=0)
+        ranking_html = self._build_arcade_ranking_html(scoreboard, lookup)
+        stats_html = self._build_arcade_statistics_html(room, state)
+
+        st.markdown(
+            f"""
+            <div class="wg-results-shell">
+              <section class="wg-results-hero">
+                <div class="wg-results-kicker">GAME OVER</div>
+                <div class="wg-results-title">FINAL SCOREBOARD</div>
+                <div class="wg-results-subtitle">Who got who?</div>
+              </section>
+              {reason_html}
+              <section class="wg-results-champion">
+                <div class="wg-results-card-label">🏆 {champion_label}</div>
+                <div class="wg-results-champion-name">{champion_names}</div>
+                <div class="wg-results-champion-score">{champion_score} pts</div>
+              </section>
+              <section class="wg-results-panel">
+                <div class="wg-results-section-title">🕹️ Ranking</div>
+                <div class="wg-results-ranking">
+                  {ranking_html}
+                </div>
+              </section>
+              {stats_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         if is_host:
             if st.button("Return to host lobby"):
@@ -658,6 +685,384 @@ class GameFlow:
 
     def _current_level_value(self, state: Dict[str, object]) -> str:
         return state.get("selected_level") or Level.SHALLOW.value
+
+    def _inject_results_arcade_css(self) -> None:
+        st.markdown(
+            """
+            <style>
+            .wg-results-shell {
+              --wg-bg: #070917;
+              --wg-panel: rgba(12, 18, 40, 0.92);
+              --wg-panel-2: rgba(20, 29, 62, 0.9);
+              --wg-cyan: #35f7ff;
+              --wg-pink: #ff3df2;
+              --wg-yellow: #ffe156;
+              --wg-green: #54ff9f;
+              --wg-text: #f6f7ff;
+              --wg-muted: #9aa8d8;
+              margin: 0.5rem 0 1.5rem;
+              padding: clamp(1rem, 3vw, 2rem);
+              border-radius: 28px;
+              background:
+                radial-gradient(circle at 10% 0%, rgba(53, 247, 255, 0.18), transparent 28%),
+                radial-gradient(circle at 90% 10%, rgba(255, 61, 242, 0.16), transparent 30%),
+                linear-gradient(135deg, #060815 0%, #101936 58%, #080a18 100%);
+              border: 1px solid rgba(53, 247, 255, 0.28);
+              box-shadow: 0 0 42px rgba(53, 247, 255, 0.12), inset 0 0 40px rgba(255,255,255,0.03);
+              color: var(--wg-text);
+              overflow: hidden;
+            }
+            .wg-results-hero {
+              text-align: center;
+              padding: 1.2rem 0 1.5rem;
+              animation: wgResultsIn 520ms ease-out both;
+            }
+            .wg-results-kicker {
+              color: var(--wg-yellow);
+              letter-spacing: 0.28em;
+              font-size: 0.78rem;
+              font-weight: 800;
+            }
+            .wg-results-title {
+              margin-top: 0.35rem;
+              font-size: clamp(2.2rem, 8vw, 5.3rem);
+              line-height: 0.92;
+              font-weight: 1000;
+              letter-spacing: -0.05em;
+              color: #ffffff;
+              text-shadow: 0 0 14px rgba(53, 247, 255, 0.75), 0 0 34px rgba(255, 61, 242, 0.4);
+              animation: wgNeonPulse 2.8s ease-in-out infinite;
+            }
+            .wg-results-subtitle {
+              margin-top: 0.7rem;
+              color: var(--wg-muted);
+              font-size: 1rem;
+              font-weight: 600;
+            }
+            .wg-results-reason {
+              margin: 0 auto 1rem;
+              max-width: 760px;
+              padding: 0.75rem 1rem;
+              border: 1px solid rgba(255, 225, 86, 0.35);
+              border-radius: 999px;
+              color: #fff5bc;
+              background: rgba(255, 225, 86, 0.08);
+              text-align: center;
+            }
+            .wg-results-champion,
+            .wg-results-panel {
+              background: linear-gradient(145deg, var(--wg-panel), var(--wg-panel-2));
+              border: 1px solid rgba(255, 255, 255, 0.12);
+              border-radius: 24px;
+              box-shadow: 0 20px 60px rgba(0, 0, 0, 0.26);
+              animation: wgResultsIn 620ms ease-out both;
+            }
+            .wg-results-champion {
+              padding: clamp(1.1rem, 3vw, 1.8rem);
+              text-align: center;
+              border-color: rgba(255, 225, 86, 0.52);
+              box-shadow: 0 0 28px rgba(255, 225, 86, 0.12), 0 20px 60px rgba(0,0,0,0.28);
+              animation: wgResultsIn 620ms ease-out both, wgWinnerPulse 3.4s ease-in-out infinite;
+            }
+            .wg-results-card-label,
+            .wg-results-section-title {
+              color: var(--wg-yellow);
+              font-size: 0.88rem;
+              font-weight: 900;
+              letter-spacing: 0.13em;
+              text-transform: uppercase;
+            }
+            .wg-results-champion-name {
+              margin-top: 0.35rem;
+              font-size: clamp(1.8rem, 5vw, 3.4rem);
+              font-weight: 1000;
+              color: #ffffff;
+            }
+            .wg-results-champion-score {
+              color: var(--wg-green);
+              font-weight: 900;
+              font-size: 1.2rem;
+            }
+            .wg-results-panel {
+              margin-top: 1rem;
+              padding: clamp(1rem, 3vw, 1.35rem);
+            }
+            .wg-results-ranking {
+              display: grid;
+              gap: 0.7rem;
+              margin-top: 0.9rem;
+            }
+            .wg-results-rank-row {
+              display: grid;
+              grid-template-columns: auto 1fr auto;
+              gap: 0.9rem;
+              align-items: center;
+              padding: 0.85rem 1rem;
+              border-radius: 18px;
+              background: rgba(255,255,255,0.055);
+              border: 1px solid rgba(255,255,255,0.08);
+            }
+            .wg-results-rank-number {
+              color: var(--wg-cyan);
+              font-weight: 1000;
+              min-width: 2.2rem;
+            }
+            .wg-results-rank-name {
+              color: var(--wg-text);
+              font-weight: 850;
+            }
+            .wg-results-rank-score {
+              color: var(--wg-yellow);
+              font-weight: 950;
+            }
+            .wg-results-stat-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+              gap: 0.85rem;
+              margin-top: 1rem;
+            }
+            .wg-results-stat-card,
+            .wg-results-bestie-card {
+              padding: 1rem;
+              border-radius: 20px;
+              background: rgba(5, 9, 24, 0.72);
+              border: 1px solid rgba(53, 247, 255, 0.16);
+              box-shadow: inset 0 0 18px rgba(53, 247, 255, 0.035);
+            }
+            .wg-results-stat-title {
+              color: var(--wg-cyan);
+              font-size: 1rem;
+              font-weight: 950;
+            }
+            .wg-results-stat-subtitle {
+              margin-top: 0.2rem;
+              color: var(--wg-muted);
+              font-size: 0.78rem;
+              font-weight: 500;
+            }
+            .wg-results-stat-value {
+              margin-top: 0.72rem;
+              color: var(--wg-text);
+              font-size: 1.18rem;
+              font-weight: 900;
+            }
+            .wg-results-bestie-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+              gap: 0.85rem;
+              margin-top: 1rem;
+            }
+            .wg-results-bestie-owner {
+              color: var(--wg-yellow);
+              font-size: 0.85rem;
+              font-weight: 900;
+            }
+            .wg-results-bestie-value {
+              margin-top: 0.35rem;
+              color: var(--wg-text);
+              font-size: 1rem;
+              font-weight: 800;
+            }
+            .wg-results-empty {
+              margin-top: 0.8rem;
+              color: var(--wg-muted);
+            }
+            @keyframes wgResultsIn {
+              from { opacity: 0; transform: translateY(14px) scale(0.985); }
+              to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+            @keyframes wgNeonPulse {
+              0%, 100% { filter: brightness(1); }
+              50% { filter: brightness(1.12); }
+            }
+            @keyframes wgWinnerPulse {
+              0%, 100% { box-shadow: 0 0 24px rgba(255,225,86,0.14), 0 20px 60px rgba(0,0,0,0.28); }
+              50% { box-shadow: 0 0 38px rgba(255,225,86,0.25), 0 20px 60px rgba(0,0,0,0.28); }
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    def _build_arcade_ranking_html(
+        self,
+        scoreboard: List[tuple[str, int]],
+        lookup: Dict[str, Player],
+    ) -> str:
+        rows: List[str] = []
+        for index, (pid, score) in enumerate(scoreboard, start=1):
+            player = lookup.get(pid)
+            if not player:
+                continue
+            rows.append(
+                "<div class='wg-results-rank-row'>"
+                f"<div class='wg-results-rank-number'>#{index}</div>"
+                f"<div class='wg-results-rank-name'>{html.escape(player.name)}</div>"
+                f"<div class='wg-results-rank-score'>{score} pts</div>"
+                "</div>"
+            )
+        return "".join(rows) or "<div class='wg-results-empty'>No scores recorded.</div>"
+
+    def _build_arcade_statistics_html(self, room: Room, state: Dict[str, object]) -> str:
+        stats = self._compute_game_statistics(room, state)
+        if not stats["completed_round_count"]:
+            return (
+                "<section class='wg-results-panel'>"
+                "<div class='wg-results-section-title'>📊 Game Statistics</div>"
+                "<div class='wg-results-empty'>No completed rounds yet.</div>"
+                "</section>"
+            )
+        stat_cards = [
+            ("🧠 Mind Reader", "Most correct guesses", self._format_stat_winners(stats["mind_reader"], "correct guess")),
+            ("🎭 Best Impostor", "Fooled the most players", self._format_stat_winners(stats["best_impostor"], "fooled guess")),
+            (
+                "🧩 404 Personality",
+                "Hardest to guess",
+                self._format_stat_winners(stats["personality_404"], "correct guess against them", lower_is_better=True),
+            ),
+            ("👀 No Incognito Mode", "Easiest to read", self._format_stat_winners(stats["no_incognito_mode"], "correct guess against them")),
+            ("📡 Group Telepathy Score", "Correct guesses by the group", f"{stats['group_telepathy_score']:.0f}%"),
+        ]
+        cards_html = "".join(
+            "<div class='wg-results-stat-card'>"
+            f"<div class='wg-results-stat-title'>{html.escape(title)}</div>"
+            f"<div class='wg-results-stat-subtitle'>{html.escape(subtitle)}</div>"
+            f"<div class='wg-results-stat-value'>{html.escape(value)}</div>"
+            "</div>"
+            for title, subtitle, value in stat_cards
+        )
+        bestie_cards = "".join(
+            self._build_bestie_card_html(line)
+            for line in stats["certified_besties"]
+        )
+        return (
+            "<section class='wg-results-panel'>"
+            "<div class='wg-results-section-title'>⚡ Game Statistics</div>"
+            f"<div class='wg-results-stat-grid'>{cards_html}</div>"
+            "</section>"
+            "<section class='wg-results-panel'>"
+            "<div class='wg-results-section-title'>🤝 Certified Besties</div>"
+            "<div class='wg-results-stat-subtitle'>Who understood each player best</div>"
+            f"<div class='wg-results-bestie-grid'>{bestie_cards}</div>"
+            "</section>"
+        )
+
+    def _build_bestie_card_html(self, line: str) -> str:
+        owner, separator, value = line.partition(":")
+        if not separator:
+            owner = "Player"
+            value = line
+        return (
+            "<div class='wg-results-bestie-card'>"
+            f"<div class='wg-results-bestie-owner'>{html.escape(owner.strip())}</div>"
+            f"<div class='wg-results-bestie-value'>{html.escape(value.strip())}</div>"
+            "</div>"
+        )
+
+    def _compute_game_statistics(self, room: Room, state: Dict[str, object]) -> Dict[str, object]:
+        lookup = self._player_lookup(room)
+        completed_rounds = [item for item in state.get("completed_rounds", []) if isinstance(item, dict)]
+        correct_guess_counts = {player.player_id: 0 for player in room.players}
+        decoy_pick_counts = {player.player_id: 0 for player in room.players}
+        storyteller_correct_counts = {player.player_id: 0 for player in room.players}
+        storyteller_guess_totals = {player.player_id: 0 for player in room.players}
+        bestie_counts = {
+            storyteller.player_id: {listener.player_id: 0 for listener in room.players if listener.player_id != storyteller.player_id}
+            for storyteller in room.players
+        }
+        total_guesses = 0
+        total_correct = 0
+
+        for round_record in completed_rounds:
+            storyteller_id = round_record.get("storyteller_id")
+            listener_ids = list(round_record.get("listener_ids") or [])
+            correct_ids = set(round_record.get("correct_listener_ids") or [])
+            total_guesses += len(listener_ids)
+            total_correct += len(correct_ids)
+            if storyteller_id in storyteller_guess_totals:
+                storyteller_guess_totals[storyteller_id] += len(listener_ids)
+                storyteller_correct_counts[storyteller_id] += len(correct_ids)
+            for pid in correct_ids:
+                if pid in correct_guess_counts:
+                    correct_guess_counts[pid] += 1
+                if storyteller_id in bestie_counts and pid in bestie_counts[storyteller_id]:
+                    bestie_counts[storyteller_id][pid] += 1
+            for pid, count in (round_record.get("decoy_picks") or {}).items():
+                if pid in decoy_pick_counts:
+                    decoy_pick_counts[pid] += int(count or 0)
+
+        storyteller_rates: Dict[str, float] = {}
+        for pid, guess_total in storyteller_guess_totals.items():
+            if guess_total:
+                storyteller_rates[pid] = storyteller_correct_counts[pid] / guess_total
+
+        return {
+            "completed_round_count": len(completed_rounds),
+            "group_telepathy_score": (total_correct / total_guesses * 100) if total_guesses else 0,
+            "mind_reader": self._top_stat_entries(correct_guess_counts, lookup),
+            "best_impostor": self._top_stat_entries(decoy_pick_counts, lookup),
+            "personality_404": self._top_stat_entries(storyteller_rates, lookup, lower_is_better=True),
+            "no_incognito_mode": self._top_stat_entries(storyteller_rates, lookup),
+            "certified_besties": self._build_certified_bestie_lines(room, bestie_counts),
+        }
+
+    def _top_stat_entries(
+        self,
+        values: Dict[str, int | float],
+        lookup: Dict[str, Player],
+        *,
+        lower_is_better: bool = False,
+    ) -> Dict[str, object]:
+        meaningful = {
+            pid: value
+            for pid, value in values.items()
+            if pid in lookup and (lower_is_better or value > 0)
+        }
+        if not meaningful:
+            return {"names": [], "value": None}
+        best_value = min(meaningful.values()) if lower_is_better else max(meaningful.values())
+        names = [lookup[pid].name for pid, value in meaningful.items() if value == best_value]
+        return {"names": sorted(names), "value": best_value}
+
+    def _build_certified_bestie_lines(
+        self,
+        room: Room,
+        bestie_counts: Dict[str, Dict[str, int]],
+    ) -> List[str]:
+        lookup = self._player_lookup(room)
+        lines: List[str] = []
+        for player in room.players:
+            counts = bestie_counts.get(player.player_id) or {}
+            meaningful = {pid: count for pid, count in counts.items() if count > 0 and pid in lookup}
+            if not meaningful:
+                lines.append(f"{player.name}: No certified bestie yet.")
+                continue
+            best_value = max(meaningful.values())
+            names = sorted(lookup[pid].name for pid, count in meaningful.items() if count == best_value)
+            suffix = "time" if best_value == 1 else "times"
+            lines.append(f"{player.name}: {', '.join(names)} ({best_value} {suffix})")
+        return lines
+
+    def _format_stat_winners(
+        self,
+        stat: Dict[str, object],
+        unit: str,
+        *,
+        lower_is_better: bool = False,
+    ) -> str:
+        names = stat.get("names") or []
+        value = stat.get("value")
+        if not names or value is None:
+            return "Not enough data."
+        if isinstance(value, float):
+            value_text = f"{value * 100:.0f}%"
+        else:
+            suffix = unit if value == 1 else f"{unit}s"
+            value_text = f"{value} {suffix}"
+        qualifier = "lowest rate" if lower_is_better and isinstance(value, float) else value_text
+        if lower_is_better and isinstance(value, float):
+            qualifier = f"{value_text} guessed correctly"
+        return f"{', '.join(names)} — {qualifier}"
 
     def _render_question_feedback_controls(
         self,
@@ -771,9 +1176,34 @@ class GameFlow:
 
         if force and candidates and current_index < len(candidates) - 1:
             next_index = current_index + 1
-            if self._set_current_question_from_candidate(room, state, prefill_key, candidates[next_index], next_index):
+            if self._set_current_question_from_candidate(
+                room,
+                state,
+                prefill_key,
+                candidates[next_index],
+                next_index,
+                history_key=history_key,
+            ):
                 if notify:
                     st.success("Question updated.")
+                self._save_state(room, state)
+                return True
+            return False
+
+        candidate_pools = state.setdefault("question_candidate_pools", {})
+        pool = candidate_pools.get(history_key) or {}
+        pooled_candidates = list(pool.get("candidates") or [])
+        pooled_next_index = int(pool.get("next_index", 0))
+        if not force and pooled_next_index < len(pooled_candidates):
+            state["question_candidates"] = pooled_candidates
+            if self._set_current_question_from_candidate(
+                room,
+                state,
+                prefill_key,
+                pooled_candidates[pooled_next_index],
+                pooled_next_index,
+                history_key=history_key,
+            ):
                 self._save_state(room, state)
                 return True
             return False
@@ -805,11 +1235,22 @@ class GameFlow:
         if not new_candidates:
             st.error("Content service error: no question was generated.")
             return False
-        if not self._set_current_question_from_candidate(room, state, prefill_key, new_candidates[0], 0):
-            return False
-
         state["question_candidates"] = new_candidates
         state["current_candidate_index"] = 0
+        candidate_pools[history_key] = {
+            "candidates": new_candidates,
+            "next_index": 0,
+        }
+        if not self._set_current_question_from_candidate(
+            room,
+            state,
+            prefill_key,
+            new_candidates[0],
+            0,
+            history_key=history_key,
+        ):
+            return False
+
         history_container = state.setdefault("question_history", {})
         angle_history_container = state.setdefault("angle_history", {})
         question_items = history_container.setdefault(history_key, [])
@@ -830,6 +1271,8 @@ class GameFlow:
         prefill_key: str,
         candidate: Dict[str, object],
         candidate_index: int,
+        *,
+        history_key: Optional[str] = None,
     ) -> bool:
         question_en = str(candidate.get("question_en") or "").strip()
         if not question_en:
@@ -857,6 +1300,11 @@ class GameFlow:
             "candidate_rank": candidate.get("rank", 0),
         }
         state["current_candidate_index"] = candidate_index
+        if history_key:
+            candidate_pools = state.setdefault("question_candidate_pools", {})
+            pool = candidate_pools.setdefault(history_key, {})
+            pool.setdefault("candidates", list(state.get("question_candidates") or []))
+            pool["next_index"] = candidate_index + 1
         st.session_state[prefill_key] = display_question
         return True
 
@@ -956,6 +1404,36 @@ class GameFlow:
             "winners": winners,
             "decoy_picks": decoy_picks,
         }
+
+    def _record_completed_round(
+        self,
+        room: Room,
+        state: Dict[str, object],
+        storyteller_id: Optional[str],
+        summary: Dict[str, object],
+    ) -> None:
+        completed_rounds = state.setdefault("completed_rounds", [])
+        round_number = int(state.get("round", 1))
+        if any(item.get("round") == round_number for item in completed_rounds if isinstance(item, dict)):
+            return
+        options = (state.get("multiple_choice") or {}).get("options", [])
+        guesses = summary.get("guesses", {})
+        correct = set(summary.get("correct", []))
+        decoy_picks = summary.get("decoy_picks", {})
+        completed_rounds.append(
+            {
+                "round": round_number,
+                "storyteller_id": storyteller_id,
+                "theme": state.get("selected_theme"),
+                "level": state.get("selected_level"),
+                "listener_ids": [player.player_id for player in room.players if player.player_id != storyteller_id],
+                "guesses": copy.deepcopy(guesses),
+                "correct_listener_ids": list(correct),
+                "decoy_picks": copy.deepcopy(decoy_picks),
+                "options": copy.deepcopy(options),
+                "deltas": copy.deepcopy(summary.get("deltas", {})),
+            }
+        )
 
     def _finalize_results(self, room: Room, state: Dict[str, object], manual: bool = False) -> None:
         scores = state.get("scores", {})

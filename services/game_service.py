@@ -58,6 +58,7 @@ class GameService:
             "question": None,
             "question_autogen_attempted": False,
             "question_candidates": [],
+            "question_candidate_pools": {},
             "current_candidate_index": 0,
             "question_history": {},
             "angle_history": {},
@@ -67,6 +68,7 @@ class GameService:
             "scores": _player_scores(room.players),
             "max_score": room.settings.max_score,
             "round_summary": None,
+            "completed_rounds": [],
             "winners": [],
         }
         return state

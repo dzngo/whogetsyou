@@ -88,6 +88,42 @@ _Avoid_: Answer normalization
 The answer listeners are trying to identify during guessing. The Guess Target is always the Storyteller Answer, regardless of whether the round is Shallow or Deep.
 _Avoid_: Truth, correct answer
 
+**Game Statistics**:
+Aggregate facts computed from completed rounds and shown at Final Results after the whole game ends. Game Statistics explain patterns in play, such as guessing accuracy or misleading answers, but they are separate from scoring.
+_Avoid_: Round summary, analytics
+
+**Completed Round**:
+A round whose answers have been revealed and scored. Game Statistics should use only Completed Rounds, not a round still in question selection, answer entry, or guessing.
+_Avoid_: Current round, partial round
+
+**Mind Reader**:
+A Game Statistic for the player with the most correct listener guesses across Completed Rounds.
+_Avoid_: Best guesser
+
+**Best Impostor**:
+A Game Statistic for the player whose listener answers were selected by other listeners the most across Completed Rounds.
+_Avoid_: Most misleading player
+
+**404 Personality**:
+A Game Statistic for the Storyteller whose Storyteller Answer was guessed correctly least often across Completed Rounds.
+_Avoid_: Hardest Storyteller to guess
+
+**No Incognito Mode**:
+A Game Statistic for the Storyteller whose Storyteller Answer was guessed correctly most often across Completed Rounds.
+_Avoid_: Most readable Storyteller
+
+**Group Telepathy Score**:
+A Game Statistic for the group's overall correct listener guesses divided by total listener guesses across Completed Rounds.
+_Avoid_: Guess accuracy
+
+**Certified Bestie**:
+A Game Statistic for each player showing the listener or listeners who correctly guessed that player's Storyteller Answer most often when that player was Storyteller. If nobody guessed that player's Storyteller Answer correctly, the player has no Certified Bestie yet.
+_Avoid_: Best friend, understands them most
+
+**Statistic Tie**:
+A Game Statistic result where multiple players share the same best value. Statistic Ties should show all tied players rather than choosing an arbitrary single winner.
+_Avoid_: Tiebreak winner
+
 **Shallow Humor Boundary**:
 The safety boundary for AI-generated Shallow questions. Shallow should stay realistic and light; playful phrasing is allowed, but generated questions should avoid fantasy premises, childish framing, cruelty, forced embarrassment, private exposure, discriminatory framing, or sexual pressure.
 _Avoid_: No boundary
@@ -173,6 +209,26 @@ Domain expert: "No. Generate the Canonical Question in English, then let Questio
 Developer: "Does Shallow need different scoring?"
 
 Domain expert: "No. The target is still the Storyteller Answer; only the style of question changes."
+
+Developer: "Are Game Statistics part of scoring?"
+
+Domain expert: "No. They explain how the game unfolded after it ends; they do not change points."
+
+Developer: "Should a half-finished round count in Game Statistics?"
+
+Domain expert: "No. Only a Completed Round counts because it has revealed answers and scoring."
+
+Developer: "Which Game Statistics should be shown first?"
+
+Domain expert: "Start with Mind Reader, Best Impostor, 404 Personality, No Incognito Mode, and Group Telepathy Score."
+
+Developer: "What does it mean to understand a player most?"
+
+Domain expert: "Use Certified Bestie: who correctly guessed that player's Storyteller Answer most often when that player was Storyteller."
+
+Developer: "If multiple players tie for a Game Statistic, who should be shown?"
+
+Domain expert: "Show all tied players. Game Statistics are playful summaries, not tiebreak scoring."
 
 Developer: "Can Shallow questions be completely unrestricted?"
 
