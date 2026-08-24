@@ -19,6 +19,7 @@ from ui import common
 
 class GameFlow:
     REFRESH_INTERVAL_SECONDS = 3
+    CUSTOM_THEME_OPTION = "Custom"
 
     def __init__(
         self,
@@ -126,6 +127,16 @@ class GameFlow:
             return False
         return storyteller_id == current_player_id
 
+    def _clear_question_draft(self, room: Room, state: Dict[str, object]) -> None:
+        """Discard an unconfirmed question before returning to round setup."""
+        state["question"] = None
+        state["question_autogen_attempted"] = False
+        state["question_candidates"] = []
+        state["current_candidate_index"] = 0
+        question_key = f"{room.room_code}_question_text"
+        st.session_state.pop(question_key, None)
+        st.session_state.pop(f"{question_key}_prefill", None)
+
     @st.fragment(run_every=REFRESH_INTERVAL_SECONDS)
     def _watch_room_updates(self, room_code: str, known_updated_at: str) -> None:
         """Rerun a passive game view only after another player saves a change."""
@@ -189,21 +200,34 @@ class GameFlow:
             return
 
         st.subheader("Choose theme")
-        options = DEFAULT_THEMES
+        theme_key = f"{room.room_code}_theme_select"
+        custom_key = f"{room.room_code}_theme_custom"
+        saved_theme = str(state.get("selected_theme") or "")
+        default_theme = (
+            saved_theme
+            if saved_theme in DEFAULT_THEMES
+            else self.CUSTOM_THEME_OPTION
+            if saved_theme
+            else DEFAULT_THEMES[0]
+        )
+        if theme_key not in st.session_state:
+            st.session_state[theme_key] = default_theme
+        if custom_key not in st.session_state and saved_theme not in DEFAULT_THEMES:
+            st.session_state[custom_key] = saved_theme
         selected = st.selectbox(
             "Select a theme",
-            options=options,
-            key=f"{room.room_code}_theme_select",
+            options=[*DEFAULT_THEMES, self.CUSTOM_THEME_OPTION],
+            key=theme_key,
         )
-        custom = st.text_input(
-            "Or enter a custom theme",
-            key=f"{room.room_code}_theme_custom",
-        )
+        custom = ""
+        if selected == self.CUSTOM_THEME_OPTION:
+            custom = st.text_input("Custom theme", key=custom_key)
         if st.button("Confirm theme"):
-            choice = custom.strip() or selected
+            choice = custom.strip() if selected == self.CUSTOM_THEME_OPTION else selected
             if not choice:
-                st.error("Please choose or enter a theme.")
+                st.error("Please enter a custom theme.")
                 return
+            self._clear_question_draft(room, state)
             state["selected_theme"] = choice
             state["phase"] = "level_selection"
             self._save_state(room, state)
@@ -227,7 +251,13 @@ class GameFlow:
             format_func=lambda value: value.title(),
             key=f"{room.room_code}_level_select",
         )
-        if st.button("Confirm level"):
+        back_col, confirm_col = st.columns(2)
+        if back_col.button("Back to theme", key=f"{room.room_code}_level_back"):
+            self._clear_question_draft(room, state)
+            state["phase"] = "theme_selection"
+            self._save_state(room, state)
+        if confirm_col.button("Confirm level", key=f"{room.room_code}_level_confirm"):
+            self._clear_question_draft(room, state)
             state["selected_level"] = level
             state["phase"] = "question_generation"
             self._save_state(room, state)
@@ -248,6 +278,15 @@ class GameFlow:
         current_theme = self._current_theme(state)
         current_level = self._current_level_value(state)
         question_data = state.get("question") or {}
+        setup_col1, setup_col2 = st.columns(2)
+        if setup_col1.button("Change theme", key=f"{room.room_code}_question_change_theme"):
+            self._clear_question_draft(room, state)
+            state["phase"] = "theme_selection"
+            self._save_state(room, state)
+        if setup_col2.button("Change level", key=f"{room.room_code}_question_change_level"):
+            self._clear_question_draft(room, state)
+            state["phase"] = "level_selection"
+            self._save_state(room, state)
         with st.container(border=True):
             if question_data:
                 st.markdown(f"**Current question:** {question_data.get('question')}")
@@ -370,14 +409,68 @@ class GameFlow:
         else:
             st.caption("Submit one plausible answer. Do not reveal whether it is yours.")
 
-        st.text_area("Your answer", key=input_key)
-
         submitted = submissions.get(current_player_id, "")
-        if submitted:
-            with st.container(border=True):
-                st.markdown("**Submitted answer**")
-                st.write(submitted)
+        editing_key = f"{input_key}_editing"
+        if not submitted:
+            st.session_state.pop(editing_key, None)
+        is_editing = not submitted or bool(st.session_state.get(editing_key, False))
 
+        st.text_area("Your answer", key=input_key, disabled=not is_editing)
+
+        if not is_editing:
+            st.caption("✓ Answer submitted")
+            if st.button("Modify", key=f"{room.room_code}_modify_answer_{current_player_id}"):
+                st.session_state[editing_key] = True
+                common.rerun()
+        else:
+            self._render_answer_actions(
+                room=room,
+                state=state,
+                question=question,
+                current_player_id=current_player_id,
+                current_player_label=current_player_label,
+                current_level=current_level,
+                submissions=submissions,
+                input_key=input_key,
+                prefill_key=prefill_key,
+                editing_key=editing_key,
+                storyteller_id=storyteller_id,
+            )
+
+        pending_count = max(len(room.players) - len(submissions), 0)
+        if pending_count > 0:
+            st.info(f"Waiting for {pending_count} player(s) to submit answers.")
+        else:
+            st.info("All answers submitted. Moving to guessing...")
+
+        if is_host and st.button("Force guessing phase", key="host_force_guessing"):
+            state["multiple_choice"] = {
+                "options": self._build_options_from_submissions(
+                    room=room,
+                    storyteller_id=storyteller_id,
+                    submissions=submissions,
+                )
+            }
+            state["listener_guesses"] = {}
+            state["round_summary"] = None
+            state["phase"] = "guessing"
+            self._save_state(room, state)
+
+    def _render_answer_actions(
+        self,
+        *,
+        room: Room,
+        state: Dict[str, object],
+        question: str,
+        current_player_id: str,
+        current_player_label: str,
+        current_level: str,
+        submissions: Dict[str, str],
+        input_key: str,
+        prefill_key: str,
+        editing_key: str,
+        storyteller_id: Optional[str],
+    ) -> None:
         col1, col2, col3 = st.columns(3)
         if col1.button("Suggest answer", key=f"{room.room_code}_suggest_answer_{current_player_id}"):
             try:
@@ -420,7 +513,8 @@ class GameFlow:
                     st.session_state[prefill_key] = rewritten
                     common.rerun()
 
-        if col3.button("Submit answer", key=f"{room.room_code}_submit_answer_{current_player_id}"):
+        submit_label = "Save changes" if current_player_id in submissions else "Submit answer"
+        if col3.button(submit_label, key=f"{room.room_code}_submit_answer_{current_player_id}"):
             answer = st.session_state.get(input_key, "").strip()
             if not answer:
                 st.error("Answer cannot be empty.")
@@ -437,6 +531,7 @@ class GameFlow:
 
             submissions[current_player_id] = answer
             state["answer_submissions"] = submissions
+            st.session_state.pop(editing_key, None)
             if len(submissions) >= len(room.players):
                 state["multiple_choice"] = {
                     "options": self._build_options_from_submissions(
@@ -448,25 +543,6 @@ class GameFlow:
                 state["listener_guesses"] = {}
                 state["round_summary"] = None
                 state["phase"] = "guessing"
-            self._save_state(room, state)
-
-        pending_count = max(len(room.players) - len(submissions), 0)
-        if pending_count > 0:
-            st.info(f"Waiting for {pending_count} player(s) to submit answers.")
-        else:
-            st.info("All answers submitted. Moving to guessing...")
-
-        if is_host and st.button("Force guessing phase", key="host_force_guessing"):
-            state["multiple_choice"] = {
-                "options": self._build_options_from_submissions(
-                    room=room,
-                    storyteller_id=storyteller_id,
-                    submissions=submissions,
-                )
-            }
-            state["listener_guesses"] = {}
-            state["round_summary"] = None
-            state["phase"] = "guessing"
             self._save_state(room, state)
 
     def _render_guess_phase(
