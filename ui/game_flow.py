@@ -997,6 +997,11 @@ class GameFlow:
             )
         stat_cards = [
             ("🧠 Mind Reader", "Most correct guesses", self._format_stat_winners(stats["mind_reader"], "correct guess")),
+            (
+                "🙃 Wrong With Confident",
+                "Fewest correct guesses",
+                self._format_stat_winners(stats["wrong_with_confident"], "correct guess", lower_is_better=True),
+            ),
             ("🎭 Best Impostor", "Fooled the most players", self._format_stat_winners(stats["best_impostor"], "fooled guess")),
             (
                 "🧩 404 Personality",
@@ -1046,6 +1051,7 @@ class GameFlow:
         lookup = self._player_lookup(room)
         completed_rounds = [item for item in state.get("completed_rounds", []) if isinstance(item, dict)]
         correct_guess_counts = {player.player_id: 0 for player in room.players}
+        listener_guess_counts = {player.player_id: 0 for player in room.players}
         decoy_pick_counts = {player.player_id: 0 for player in room.players}
         storyteller_correct_counts = {player.player_id: 0 for player in room.players}
         storyteller_guess_totals = {player.player_id: 0 for player in room.players}
@@ -1059,9 +1065,13 @@ class GameFlow:
         for round_record in completed_rounds:
             storyteller_id = round_record.get("storyteller_id")
             listener_ids = list(round_record.get("listener_ids") or [])
+            guesses = round_record.get("guesses") or {}
             correct_ids = set(round_record.get("correct_listener_ids") or [])
             total_guesses += len(listener_ids)
             total_correct += len(correct_ids)
+            for pid in guesses:
+                if pid in listener_guess_counts:
+                    listener_guess_counts[pid] += 1
             if storyteller_id in storyteller_guess_totals:
                 storyteller_guess_totals[storyteller_id] += len(listener_ids)
                 storyteller_correct_counts[storyteller_id] += len(correct_ids)
@@ -1083,6 +1093,15 @@ class GameFlow:
             "completed_round_count": len(completed_rounds),
             "group_telepathy_score": (total_correct / total_guesses * 100) if total_guesses else 0,
             "mind_reader": self._top_stat_entries(correct_guess_counts, lookup),
+            "wrong_with_confident": self._top_stat_entries(
+                {
+                    pid: correct_guess_counts.get(pid, 0)
+                    for pid, guess_count in listener_guess_counts.items()
+                    if guess_count > 0
+                },
+                lookup,
+                lower_is_better=True,
+            ),
             "best_impostor": self._top_stat_entries(decoy_pick_counts, lookup),
             "personality_404": self._top_stat_entries(storyteller_rates, lookup, lower_is_better=True),
             "no_incognito_mode": self._top_stat_entries(storyteller_rates, lookup),
@@ -1140,12 +1159,18 @@ class GameFlow:
         if isinstance(value, float):
             value_text = f"{value * 100:.0f}%"
         else:
-            suffix = unit if value == 1 else f"{unit}s"
+            suffix = unit if value == 1 else self._pluralize_stat_unit(unit)
             value_text = f"{value} {suffix}"
         qualifier = "lowest rate" if lower_is_better and isinstance(value, float) else value_text
         if lower_is_better and isinstance(value, float):
             qualifier = f"{value_text} guessed correctly"
         return f"{', '.join(names)} — {qualifier}"
+
+    @staticmethod
+    def _pluralize_stat_unit(unit: str) -> str:
+        if unit.endswith("guess"):
+            return f"{unit}es"
+        return f"{unit}s"
 
     def _render_question_feedback_controls(
         self,

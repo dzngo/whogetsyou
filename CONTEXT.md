@@ -100,6 +100,10 @@ _Avoid_: Current round, partial round
 A Game Statistic for the player with the most correct listener guesses across Completed Rounds.
 _Avoid_: Best guesser
 
+**Wrong With Confident**:
+A Game Statistic for the player with the fewest correct listener guesses among players who made listener guesses across Completed Rounds.
+_Avoid_: Worst guesser, does not understand others
+
 **Best Impostor**:
 A Game Statistic for the player whose listener answers were selected by other listeners the most across Completed Rounds.
 _Avoid_: Most misleading player
@@ -220,7 +224,7 @@ Domain expert: "No. Only a Completed Round counts because it has revealed answer
 
 Developer: "Which Game Statistics should be shown first?"
 
-Domain expert: "Start with Mind Reader, Best Impostor, 404 Personality, No Incognito Mode, and Group Telepathy Score."
+Domain expert: "Start with Mind Reader, Wrong With Confident, Best Impostor, 404 Personality, No Incognito Mode, and Group Telepathy Score."
 
 Developer: "What does it mean to understand a player most?"
 
