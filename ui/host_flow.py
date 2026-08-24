@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from models import (
     SUPPORTED_LLM_MODELS,
@@ -22,6 +21,7 @@ from ui import common
 
 class HostFlow:
     STATE_KEY = "host_flow"
+    REFRESH_INTERVAL_SECONDS = 3
 
     def __init__(
         self,
@@ -236,7 +236,7 @@ class HostFlow:
             common.rerun()
             return
 
-        st_autorefresh(interval=1000, key=f"host_lobby_autorefresh_{room.room_code}")
+        self._watch_room_updates(room.room_code, room.updated_at.isoformat())
 
         st.session_state["player_profile"] = {
             "player_id": room.host_id,
@@ -305,6 +305,13 @@ class HostFlow:
             state["room_code"] = None
             st.session_state.pop("active_room_code", None)
             common.rerun()
+
+    @st.fragment(run_every=REFRESH_INTERVAL_SECONDS)
+    def _watch_room_updates(self, room_code: str, known_updated_at: str) -> None:
+        """Rerun the page only when another player changes the room."""
+        room = self.room_service.get_room_by_code(room_code)
+        if not room or room.updated_at.isoformat() != known_updated_at:
+            st.rerun()
 
     def _build_room_settings(self, state: Dict[str, object]) -> RoomSettings:
         existing_room = self._get_existing_room() if state["editing_existing"] else None

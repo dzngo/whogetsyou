@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Dict
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from services.room_service import PlayerNotFoundError, RoomAlreadyStartedError, RoomService
 from ui import common
@@ -13,6 +12,7 @@ from ui import common
 
 class JoinFlow:
     STATE_KEY = "join_flow"
+    REFRESH_INTERVAL_SECONDS = 3
 
     def __init__(self, room_service: RoomService) -> None:
         self.room_service = room_service
@@ -211,8 +211,7 @@ class JoinFlow:
             st.session_state["route"] = "game"
             common.rerun()
             return
-        # Auto-refresh while waiting for the host to start the game.
-        st_autorefresh(interval=1000, key=f"join_lobby_autorefresh_{room.room_code}")
+        self._watch_room_updates(room.room_code, room.updated_at.isoformat())
         common.show_room_summary(room, display_llm=False)
         st.markdown("### Connected players")
         with st.container(border=True):
@@ -228,6 +227,13 @@ class JoinFlow:
             state["step"] = "room_list"
             state["candidate_room_code"] = None
             common.rerun()
+
+    @st.fragment(run_every=REFRESH_INTERVAL_SECONDS)
+    def _watch_room_updates(self, room_code: str, known_updated_at: str) -> None:
+        """Rerun the page only when the lobby changes."""
+        room = self.room_service.get_room_by_code(room_code)
+        if not room or room.updated_at.isoformat() != known_updated_at:
+            st.rerun()
 
     def _load_joined_room(self):
         code = self.state.get("joined_room_code")

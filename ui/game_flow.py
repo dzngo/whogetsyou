@@ -8,7 +8,6 @@ import random
 from typing import Dict, List, Optional
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
 
 from models import DEFAULT_THEMES, Level, Player, Room
 from services.game_service import GameService
@@ -19,6 +18,8 @@ from ui import common
 
 
 class GameFlow:
+    REFRESH_INTERVAL_SECONDS = 3
+
     def __init__(
         self,
         room_service: RoomService,
@@ -69,12 +70,11 @@ class GameFlow:
             "question_generation",
             "reveal",
         }
-        if (not is_storyteller and phase in waiting_phases) or (
+        should_watch_for_updates = (not is_storyteller and phase in waiting_phases) or (
             phase == "answer_entry" and listener_has_submitted
-        ) or (phase == "guessing" and listener_has_guessed):
-            st_autorefresh(interval=1000, key=f"game_auto_refresh_wait_{room.room_code}")
-        if is_storyteller and phase == "guessing":
-            st_autorefresh(interval=1000, key=f"game_auto_refresh_storyteller_{room.room_code}_{phase}")
+        ) or (phase == "guessing" and (listener_has_guessed or is_storyteller))
+        if should_watch_for_updates:
+            self._watch_room_updates(room.room_code, room.updated_at.isoformat())
 
         self._render_board(
             room,
@@ -125,6 +125,13 @@ class GameFlow:
         if not storyteller_id or not current_player_id:
             return False
         return storyteller_id == current_player_id
+
+    @st.fragment(run_every=REFRESH_INTERVAL_SECONDS)
+    def _watch_room_updates(self, room_code: str, known_updated_at: str) -> None:
+        """Rerun a passive game view only after another player saves a change."""
+        room = self.room_service.get_room_by_code(room_code)
+        if not room or room.updated_at.isoformat() != known_updated_at:
+            st.rerun()
 
     def _render_board(
         self,
