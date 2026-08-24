@@ -177,3 +177,7 @@ cython_debug/
 *.csv
 evals/results/*.jsonl
 cache/
+
+# Local credentials
+.streamlit/secrets.toml
+gen-lang-client-0837774066-3aea0adf827d.json
