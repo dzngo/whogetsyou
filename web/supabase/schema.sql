@@ -19,7 +19,7 @@ create table rooms (
   host_id           uuid not null,            -- players.id of the host
   is_private        boolean not null default false,
   started           boolean not null default false,
-  settings          jsonb not null default '{"max_score":100,"language":"en","llm_model":"gemini-2.5-flash"}'::jsonb,
+  settings          jsonb not null default '{"max_score":100,"language":"en","llm_model":"gemini-3.6-flash"}'::jsonb,
   -- transient in-game state (used from Phase 2 onward)
   phase             text,                      -- theme_selection | level_selection | question_generation | answer_entry | guessing | reveal | results
   round             integer not null default 0,
@@ -58,6 +58,7 @@ create table rounds (
   theme          text,
   level          text,
   question       jsonb,                         -- { question, question_en, angle_key }
+  options        jsonb,                         -- shuffled answer options shown during guessing
   summary        jsonb,                         -- scoring result for the round
   created_at     timestamptz not null default now(),
   unique (room_id, round_no)

@@ -26,7 +26,7 @@ export default function HostPage() {
   const [hostName, setHostName] = useState("");
   const [roomName, setRoomName] = useState("");
   const [language, setLanguage] = useState<Language>("vn");
-  const [model, setModel] = useState("gemini-2.5-flash");
+  const [model, setModel] = useState("gemini-3.6-flash");
   const [maxScore, setMaxScore] = useState(100);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

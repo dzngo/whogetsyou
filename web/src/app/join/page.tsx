@@ -17,6 +17,7 @@ export default function JoinPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const c = params.get("code");
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (c) setCode(c.toUpperCase());
   }, []);
 

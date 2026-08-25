@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# The Next.js app's src/lib is source code, not a Python build dir — keep it tracked.
+!web/src/lib/
 parts/
 sdist/
 var/

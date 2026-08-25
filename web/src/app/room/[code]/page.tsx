@@ -1,9 +1,9 @@
 "use client";
 
 import { use } from "react";
-import Lobby from "@/components/Lobby";
+import RoomView from "@/components/RoomView";
 
 export default function RoomPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
-  return <Lobby code={code.toUpperCase()} />;
+  return <RoomView code={code.toUpperCase()} />;
 }

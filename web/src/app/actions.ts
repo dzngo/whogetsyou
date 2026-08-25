@@ -5,6 +5,7 @@ import {
   MIN_PLAYERS_TO_START,
   SUPPORTED_LANGUAGES,
   SUPPORTED_LLM_MODELS,
+  DEFAULT_LLM_MODEL,
   type Language,
   type RoomSettings,
 } from "@/lib/types";
@@ -32,7 +33,7 @@ function normalizeSettings(input: Partial<RoomSettings> | undefined): RoomSettin
   const llm_model =
     input?.llm_model && SUPPORTED_LLM_MODELS[input.llm_model]
       ? input.llm_model
-      : "gemini-2.5-flash";
+      : DEFAULT_LLM_MODEL;
   let max_score = Number(input?.max_score ?? 100);
   if (!Number.isFinite(max_score)) max_score = 100;
   max_score = Math.min(1000, Math.max(10, Math.round(max_score)));

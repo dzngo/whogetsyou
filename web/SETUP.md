@@ -17,7 +17,7 @@ Phiên bản viết lại: **Next.js + Supabase**, realtime bằng websocket (kh
   - `NEXT_PUBLIC_SUPABASE_URL` → mục **Data API** → *Project URL*
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` → mục **API Keys** → *anon / public* (hoặc *Publishable key*)
   - `SUPABASE_SERVICE_ROLE_KEY` → mục **API Keys** → *service_role* (khoá bí mật — chỉ dùng ở server)
-- Điền thêm `GOOGLE_API_KEY` (dùng model Gemini mặc định) — phần này cần cho Phase 3 trở đi, chưa cần ngay để test lobby.
+<!-- - Điền thêm `GOOGLE_API_KEY` (dùng model Gemini mặc định) — phần này cần cho Phase 3 trở đi, chưa cần ngay để test lobby. -->
 
 > File `.env.local` đã được `.gitignore` nên khoá không bao giờ bị đẩy lên git.
 
@@ -30,18 +30,33 @@ npm run dev
 
 Mở http://localhost:3000. Để thử realtime: mở **2–3 tab** (hoặc điện thoại cùng wifi vào `http://<IP-máy>:3000`), một tab tạo phòng, các tab kia vào bằng mã. Người vào là mọi tab thấy ngay — **không còn refresh 3 giây**.
 
-## Deploy lên Vercel
+## Deploy lên Vercel (từng bước)
 
-- Import repo, đặt **Root Directory = `web`**.
-- Thêm 4 biến môi trường ở Project → Settings → Environment Variables (giống `.env.local`).
-- Deploy.
+1. **Đẩy code lên GitHub**: commit + push nhánh này (`refactor_JS_deploy`) lên `dzngo/whogetsyou`.
+2. Vào [vercel.com/new](https://vercel.com/new) → **Import** repo `whogetsyou`.
+3. Ở màn hình cấu hình:
+   - **Root Directory**: bấm *Edit* và chọn **`web`** (rất quan trọng — code Next.js nằm trong `web/`).
+   - Framework: Vercel tự nhận **Next.js** (không cần chỉnh).
+4. Mở **Environment Variables** và thêm 4 biến (lấy y như trong `.env.local`):
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `GOOGLE_API_KEY`
+5. Bấm **Deploy**. Xong sẽ có link dạng `https://whogetsyou-xxxx.vercel.app`.
+6. Mỗi lần push code mới lên nhánh này, Vercel tự deploy lại.
 
-## Đã xong (Phase 0–1)
+> Supabase không cần cấu hình thêm gì cho Vercel — anon key hoạt động từ mọi tên miền, realtime chạy qua websocket bình thường.
 
-- Trang chủ, tạo phòng, vào phòng
-- Lobby realtime: danh sách người chơi cập nhật trực tiếp, chủ phòng chỉnh điểm thắng / xoá người / bắt đầu
-- Nền dữ liệu Supabase + subscription websocket
+## Đã xong (Phase 0–5)
 
-## Kế tiếp (Phase 2–4)
+- **Vào chơi**: trang chủ, tạo phòng, vào phòng, lobby realtime
+- **Chơi**: máy trạng thái 7 phase, tự chuyển khi mọi người nộp/đoán xong
+- **AI**: sinh câu hỏi theo chủ đề/mức độ, dịch sang ngôn ngữ phòng, gợi ý câu trả lời (model mặc định `gemini-3.6-flash`)
+- **Điểm**: hệ số nhẹ×1/sâu×2 + decoy bonus, màn lật bài, kết quả cuối
+- **Chắc chắn**: tự đồng bộ lại khi mất kết nối / quay lại tab, vào lại phòng giữa ván, chủ phòng có nút **Kết thúc sớm** và **Bỏ qua lượt**
 
-- Màn chơi đầy đủ 7 phase, sinh câu hỏi bằng AI, tính điểm.
+## Kiểm thử (chạy trong `web/`)
+
+- `node scripts/test-scoring.ts` — luật tính điểm
+- `node scripts/test-flow.mjs` — một vòng chơi trên Supabase thật
+- `node scripts/test-llm.mjs` — sinh câu hỏi + dịch bằng Gemini thật
