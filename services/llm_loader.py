@@ -160,9 +160,9 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
         )
     openai_models = list(SUPPORTED_OPENAI_LLM_MODELS.keys())
     if model_name.lower() in openai_models:
-        api_key = _get_secret("OPENAI_API_KEY")
+        api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
-            raise EnvironmentError(f"OPENAI_API_KEY must be set to use {model_name} models")
+            raise EnvironmentError(f"GOOGLE_API_KEY must be set to use {model_name} models")
         return OpenAILLM(model=model_name, api_key=api_key)
 
     raise NotImplementedError(f"Model '{model_name}' is not supported by the LLM registry")
