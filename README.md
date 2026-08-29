@@ -29,7 +29,7 @@ Each round follows this flow:
 7. **Rotation** — If no winner yet, next Storyteller starts the next round.
 
 Question styles:
-- **Shallow**: funny, quick, low-pressure prompts built around playful hypotheticals, silly choices, or imagined situations.
+- **Shallow**: lightweight, realistic, low-pressure prompts about an everyday preference, habit, routine, simple choice, or plausible situation. A generic poll is allowed and humor is optional.
 - **Deep**: reflective, emotionally safe prompts that invite a personally true answer.
 - **Random 🎲**: wildcard theme for surprising questions.
 
