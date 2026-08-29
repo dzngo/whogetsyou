@@ -104,6 +104,14 @@ _Avoid_: generation quota, retrieval policy
 The automated process that grows and maintains the Question Bank by proposing, challenging, evaluating, deduplicating, and admitting Canonical Questions.
 _Avoid_: Question generator, human review queue
 
+**LLM Agent**:
+One isolated, role-specific model invocation inside the Question Enrichment Pipeline, with a versioned prompt, limited context, structured input, and structured output. An LLM Agent has no hidden memory between runs and cannot directly mutate trusted Question Bank or Taxonomy state.
+_Avoid_: persistent persona, deterministic Module
+
+**Agent Configuration**:
+The versioned execution contract for one LLM Agent role, including model identity, reasoning effort, prompts, schemas, context policy, rubric or taxonomy version, timeout, and retry limit.
+_Avoid_: untracked prompt, model alias alone
+
 **Creative Concept**:
 A structured, prewording proposal combining one Question Aspect, Semantic Scenario, Question Perspective, and Answer Space. Independent scouts create and compare Creative Concepts before a composer writes question text.
 _Avoid_: Question Candidate, draft question
@@ -359,6 +367,10 @@ Domain expert: "No. Roll back to an earlier Question Bank Snapshot or release a 
 Developer: "Can question skips automatically make the enrichment agents retire a bank question?"
 
 Domain expert: "No. A Question Usage Event is stored for possible future study, but Question Usage Metrics have no read path into the bank or retrieval in this effort."
+
+Developer: "Is the Question Enrichment Pipeline actually a multi-agent LLM system?"
+
+Domain expert: "Yes. Independent LLM Agents create, compose, classify, judge, and challenge questions. Deterministic Modules orchestrate those agents and alone control admission, identity, lifecycle, and release."
 
 Developer: "Can a Shallow Work question be about anything light?"
 

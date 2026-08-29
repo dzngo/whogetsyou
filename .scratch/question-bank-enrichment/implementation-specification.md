@@ -2,9 +2,21 @@
 
 ## Outcome
 
-Build an offline, autonomous Question Enrichment Pipeline that grows a private canonical-English Question Bank across every existing Named Theme × Level horizon. Variety is the primary quality goal. Deep questions must also invite safe, characteristic personal revelation. Clear proposals are admitted or rejected automatically; only genuine uncertainty requires a person.
+Build an offline, autonomous LLM multi-agent Question Enrichment Pipeline that grows a private canonical-English Question Bank across every existing Named Theme × Level horizon. Independent creative, evaluation, classification, and challenge agents do the semantic work; deterministic Modules orchestrate them and control trusted state. Variety is the primary quality goal. Deep questions must also invite safe, characteristic personal revelation. Clear proposals are admitted or rejected automatically; only genuine uncertainty requires a person.
 
 This specification covers the bank-building system. Runtime sampling, retrieval ranking, adaptive use of metrics, full-bank population, and gameplay integration are separate efforts.
+
+The concrete agent roster, orchestration graph, context-isolation policy, model-selection rules, and starting logical agent count are defined in [LLM Multi-Agent System Architecture](llm-multi-agent-architecture.md). The Modules below are the stable interfaces that contain and coordinate those agents; they do not replace the agents.
+
+## LLM Multi-Agent Architecture at a Glance
+
+- **Proposal group:** four isolated LLM scouts explore Aspect, Scenario, Perspective, and Contrast, followed by a Concept Relation Judge and one Composer invocation per surviving concept.
+- **Evaluation group:** four isolated first-pass LLM judges cover clarity/openness, Level/safety, realism/structure, and ontology, followed by per-neighbor Relation Judges and an Evidence Challenger.
+- **Theme group:** a Theme Membership Classifier and Theme Classification Challenger assign resolved zero-to-many Theme Memberships after final Accept.
+- **Taxonomy group:** a candidate author, independent specialist judges, an adversarial challenger, and shadow classifiers handle the stricter Aspect/Perspective evolution path.
+- **Deterministic control:** the Pipeline Orchestrator, Admission Decider, Question Bank, Taxonomy Registry, Coverage Planner, and Release Module enforce ordering, idempotency, fail-closed rules, and trusted persistence.
+
+Agents are isolated role-specific LLM invocations with versioned prompts and structured outputs. They are not persistent personas, do not share undeclared conversation history, and cannot directly mutate trusted state.
 
 ## End-to-End Flow
 
@@ -71,7 +83,7 @@ Hard gates are understandable text, ordinary answerability, Bounded Openness, re
 
 ## Modules and Interfaces
 
-Each interface is the caller and test surface. Storage tables, agent graphs, prompts, indexes, and worker topology remain inside the corresponding module implementation.
+Each interface is the caller and test surface. LLM Agent graphs, prompts, indexes, storage tables, and worker topology remain inside the corresponding Module implementation. Agent roles and isolation policies remain explicit, versioned architecture even though callers do not operate individual agents directly.
 
 ### Pipeline Orchestrator Module
 
@@ -244,8 +256,9 @@ These values are configuration belonging to a policy version. Change them throug
 
 ### Phase 2 — Proposal and Evaluation Harness
 
-- Implement isolated Creative Concept scouts and composition.
-- Implement specialist output schemas, neighbor retrieval adapters, relation judgments, and abstaining decision rules.
+- Implement the starting LLM Agent Configuration: four isolated Creative Concept scouts, the Concept Relation Judge, and one Composer invocation per concept.
+- Implement four independent evaluation specialists, per-neighbor Relation Judges, the Evidence Challenger, and abstaining deterministic decision rules.
+- Persist the exact model, prompt, schema, context-policy, and execution version for every LLM Agent invocation.
 - Run every topology variation against Reference Examples before adding evaluator count or debate complexity.
 
 ### Phase 3 — Review, Taxonomy, and Coverage
@@ -278,6 +291,7 @@ These values are configuration belonging to a policy version. Change them throug
 
 ## Decision Records
 
+- [LLM multi-agent system architecture](llm-multi-agent-architecture.md)
 - [Question quality contract](question-quality-contract.md)
 - [Diversity ontology](diversity-ontology.md)
 - [Question source and provenance](question-source-and-provenance-policy.md)

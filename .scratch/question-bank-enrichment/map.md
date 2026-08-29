@@ -5,7 +5,7 @@ Status: resolved
 
 ## Destination
 
-Produce an implementation-ready product and technical specification for building and maintaining a large, high-quality canonical-English Question Bank across the existing Theme × Level space. The specification must make the automated Question Enrichment Pipeline reliable and creative enough to operate without per-question human approval, while routing genuine uncertainty to a Human Review Queue.
+Produce an implementation-ready product and technical specification for an offline LLM multi-agent system that builds and maintains a large, high-quality canonical-English Question Bank across the existing Theme × Level space. The specification must make the automated Question Enrichment Pipeline reliable and creative enough to operate without per-question human approval, while routing genuine uncertainty to a Human Review Queue.
 
 ## Notes
 
@@ -23,6 +23,7 @@ Produce an implementation-ready product and technical specification for building
 
 <!-- Closed tickets are indexed here by name with a one-line gist and link. -->
 
+- [LLM Multi-Agent System Architecture](llm-multi-agent-architecture.md): isolated role-specific LLM scouts, composers, classifiers, judges, challengers, and shadow evaluators run behind deterministic orchestration, admission, bank, taxonomy, and release Modules; model assignment is versioned and evidence-driven.
 - [Define the Question Quality Contract](issues/01-define-question-quality-contract.md): Shallow permits lightweight generic polls while Deep requires safe personal revelation; after clear text, realism, safety, Level, Bounded Openness, and bank-distinctness gates pass, global variety outranks polish and Theme is assigned afterward as zero-to-many equal memberships.
 - [Prototype the Diversity Ontology with Real Questions](issues/02-prototype-diversity-ontology.md): bank diversity uses global Question Aspect plus separate Semantic Scenario, Question Perspective, Answer Space, and Wording Pattern relations; Theme-owned Question Angle remains only a legacy generation aid, and no single similarity score is authoritative.
 - [Define Question Source and Provenance Boundaries](issues/05-define-question-source-boundaries.md): only de novo, project-owned, explicitly contributed, or explicitly licensed sources are allowed; gameplay text and the existing eval corpus are excluded, every rewrite preserves Question Provenance, benchmarks stay isolated, and the bank is private by default.
@@ -42,6 +43,7 @@ Produce an implementation-ready product and technical specification for building
 
 - All fourteen tickets are resolved.
 - The consolidated build handoff is [`implementation-specification.md`](implementation-specification.md).
+- The explicit agent roster, orchestration graph, context isolation, model assignment, parallelism, and failure behavior are in [`llm-multi-agent-architecture.md`](llm-multi-agent-architecture.md).
 - Module seams, trusted records, automatic decisions, human-review limits, taxonomy evolution, coverage completion, release safety, and metric isolation are specified.
 
 ## Implementation-time selections
