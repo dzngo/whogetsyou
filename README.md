@@ -98,3 +98,52 @@ Phases:
 5. **Guessing** — Listeners guess the Storyteller answer from all submitted answers
 6. **Reveal & Scoring** — Show Storyteller answer, listener guesses, and per-round point deltas
 7. **Results** — Final scoreboard and winners
+
+---
+
+## 3. Offline Question Bank Enrichment
+
+The `question_bank` package builds the future Question Bank offline. It does not alter live gameplay question generation or sampling.
+
+The role routing is intentionally mixed-model:
+
+- Creative scouts, composers, and the taxonomy candidate author use `gemini-3.5-flash-high`, which resolves to Gemini 3.5 Flash with high thinking.
+- Evaluation, relation, challenge, theme-classification, and taxonomy-judging roles use `gpt-5.4-mini-high`.
+
+Both providers use structured outputs. Each isolated invocation records its provider model, reasoning setting, prompt/schema/context versions, hashes, status, and concise reason codes. Private chain-of-thought is neither requested nor stored.
+
+Credentials are loaded from the existing `.env` file as `GOOGLE_API_KEY` and `OPENAI_API_KEY`.
+
+Initialize local relational stores:
+
+```bash
+python -m question_bank --data-dir storage/question_bank init
+```
+
+Install the human-confirmed initial Aspect/Perspective taxonomy and a JSON Coverage Plan before autonomous operation:
+
+```bash
+python -m question_bank --data-dir storage/question_bank taxonomy-install \
+  --aspect self_understanding \
+  --perspective restoration
+
+python -m question_bank --data-dir storage/question_bank coverage-plan-install \
+  --taxonomy-version <taxonomy-version-from-the-previous-command> \
+  --regions-file coverage-regions.json
+```
+
+Run one bounded enrichment brief against a fixed snapshot:
+
+```bash
+python -m question_bank --data-dir storage/question_bank enrich \
+  --level deep \
+  --gap-json '{"region_id":"identity-deep-restoration","aspect_id":"self_understanding","perspective_id":"restoration"}' \
+  --taxonomy-version taxonomy-v1 \
+  --concepts-per-scout 5
+```
+
+`autonomous` reads the current released taxonomy and Coverage Plan, selects the next gap itself, and stops at explicit iteration, proposal, or review-queue budgets. `--run-completion-challenge` enables the three-round/two-strategy saturation test when coverage is healthy. `--auto-publish` still fails closed unless the candidate passes taxonomy, coverage, distinctness, index-rebuild, policy-revalidation, Reference Example, and spot-check gates.
+
+Reference Examples are imported separately—never from the existing eval corpus—then human-confirmed once and regression-tested under the exact release policy versions. `reference-import`, `reference-confirm`, and `reference-regression-record` manage those records.
+
+`review-list`, `review-resolve`, `release-build`, `release-verify`, `release-publish`, `release-rollback`, and `status` expose the remaining operator workflows. Human Accept resumes Theme classification and admission; a human edit creates a new proposal version and re-enters full evaluation. Run `python -m question_bank --help` for all arguments.

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from openai import OpenAI
 
-from models import SUPPORTED_GEMINI_LLM_MODELS, SUPPORTED_OPENAI_LLM_MODELS
+from models import resolve_llm_model
 
 
 def _content_to_text(content: Any) -> str:
@@ -88,46 +88,54 @@ class BaseLLM(ABC):
 class GeminiLLM(BaseLLM):
     """LLM wrapper that routes Gemini models through the OpenAI compatibility API."""
 
-    def __init__(self, model: str, api_key: str, base_url: str):
+    def __init__(self, model: str, api_key: str, base_url: str, reasoning_effort: Optional[str] = None):
         super().__init__(model)
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
+        self._reasoning_effort = reasoning_effort
 
     def parse_structured(self, messages: Sequence[Dict[str, str]], response_model: Any) -> Any:
-        completion = self._client.beta.chat.completions.parse(
-            model=self.model_name,
-            messages=list(messages),
-            response_format=response_model,
-        )
+        request_kwargs: Dict[str, Any] = {
+            "model": self.model_name,
+            "messages": list(messages),
+            "response_format": response_model,
+        }
+        if self._reasoning_effort:
+            request_kwargs["reasoning_effort"] = self._reasoning_effort
+        completion = self._client.beta.chat.completions.parse(**request_kwargs)
         return _safe_structured_parse(completion, response_model)
 
     def complete_text(self, messages: Sequence[Dict[str, str]]) -> str:
-        completion = self._client.chat.completions.create(
-            model=self.model_name,
-            messages=list(messages),
-        )
+        request_kwargs: Dict[str, Any] = {"model": self.model_name, "messages": list(messages)}
+        if self._reasoning_effort:
+            request_kwargs["reasoning_effort"] = self._reasoning_effort
+        completion = self._client.chat.completions.create(**request_kwargs)
         return _completion_to_text(completion)
 
 
 class OpenAILLM(BaseLLM):
     """LLM wrapper for native OpenAI chat models."""
 
-    def __init__(self, model: str, api_key: str):
+    def __init__(self, model: str, api_key: str, reasoning_effort: Optional[str] = None):
         super().__init__(model)
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, timeout=60.0)
+        self._reasoning_effort = reasoning_effort
 
     def parse_structured(self, messages: Sequence[Dict[str, str]], response_model: Any) -> Any:
-        completion = self._client.responses.parse(
-            model=self.model_name,
-            input=list(messages),
-            text_format=response_model,
-        )
+        request_kwargs: Dict[str, Any] = {
+            "model": self.model_name,
+            "input": list(messages),
+            "text_format": response_model,
+        }
+        if self._reasoning_effort:
+            request_kwargs["reasoning"] = {"effort": self._reasoning_effort}
+        completion = self._client.responses.parse(**request_kwargs)
         return _safe_structured_parse(completion, response_model)
 
     def complete_text(self, messages: Sequence[Dict[str, str]]) -> str:
-        completion = self._client.chat.completions.create(
-            model=self.model_name,
-            messages=list(messages),
-        )
+        request_kwargs: Dict[str, Any] = {"model": self.model_name, "messages": list(messages)}
+        if self._reasoning_effort:
+            request_kwargs["reasoning_effort"] = self._reasoning_effort
+        completion = self._client.chat.completions.create(**request_kwargs)
         return _completion_to_text(completion)
 
 
@@ -149,20 +157,26 @@ def get_llm(model_name: Optional[str] = None) -> BaseLLM:
     if model_name is None:
         model_name = "gemini-2.5-flash"  # default model
 
-    gemini_models = list(SUPPORTED_GEMINI_LLM_MODELS.keys())
-    if model_name.lower() in gemini_models:
+    selection_key = model_name.lower()
+    config = resolve_llm_model(selection_key)
+    provider_model = config.provider_model
+    reasoning_effort = config.reasoning_effort
+
+    if config.provider == "gemini":
         api_key = _get_secret("GOOGLE_API_KEY")
         if not api_key:
             raise EnvironmentError(f"GOOGLE_API_KEY  must be set to use {model_name} models")
 
         return GeminiLLM(
-            model=model_name, api_key=api_key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            model=provider_model,
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            reasoning_effort=reasoning_effort,
         )
-    openai_models = list(SUPPORTED_OPENAI_LLM_MODELS.keys())
-    if model_name.lower() in openai_models:
+    if config.provider == "openai":
         api_key = _get_secret("OPENAI_API_KEY")
         if not api_key:
             raise EnvironmentError(f"OPENAI_API_KEY must be set to use {model_name} models")
-        return OpenAILLM(model=model_name, api_key=api_key)
+        return OpenAILLM(model=provider_model, api_key=api_key, reasoning_effort=reasoning_effort)
 
-    raise NotImplementedError(f"Model '{model_name}' is not supported by the LLM registry")
+    raise NotImplementedError(f"Provider '{config.provider}' is not supported")
