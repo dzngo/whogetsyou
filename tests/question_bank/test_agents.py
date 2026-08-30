@@ -6,16 +6,25 @@ from typing import Any
 
 from question_bank.agents import (
     AgentRunner,
+    CoveragePlanAgentGroup,
+    JudgmentOutput,
     ModelRouting,
     ProposalEvaluation,
     ProposalProduction,
+    ReferenceRegressionEvaluator,
     ReleaseRevalidator,
     TaxonomyAgentGroup,
     ThemeClassifier,
 )
 from question_bank.contracts import CreativeConcept, EnrichmentBrief, QuestionLevel
 from question_bank.core import AdmissionDecider, QuestionBank
-from question_bank.modules import QuestionBankNeighborIndex, TaxonomyRegistry
+from question_bank.modules import (
+    CoveragePlanner,
+    HumanReview,
+    QuestionBankNeighborIndex,
+    ReferenceExampleRegistry,
+    TaxonomyRegistry,
+)
 from tests.question_bank.test_core import accepted_package
 
 
@@ -38,20 +47,24 @@ class ScriptedLLM:
                         "semantic_scenario": f"{role} scenario",
                         "answer_space": f"{role} answer",
                         "taxonomy_status": "approved",
+                        "concise_evidence": "A distinct scenario and answer space.",
                     }
-                ]
+                ],
+                concise_evidence="The concepts follow the assigned scout mission.",
             )
         if response_model.__name__ == "ConceptDedupOutput":
             payload = json.loads(messages[1]["content"])
             return response_model(
-                keep_concept_ids=[concept["concept_id"] for concept in payload["concepts"]]
+                keep_concept_ids=[concept["concept_id"] for concept in payload["concepts"]],
+                concise_evidence="The retained concepts are materially distinct.",
             )
         if response_model.__name__ == "ProposalOutput":
             payload = json.loads(messages[1]["content"])
-            scout_role = payload["concept"]["scout_role"]
+            scenario = payload["concept"]["semantic_scenario"]
             return response_model(
                 question="What small ritual helps you feel like yourself again?",
-                wording_pattern=f"open-{scout_role}",
+                wording_pattern=f"open-{scenario}",
+                concise_evidence="One open question expresses the concept directly.",
             )
         if response_model.__name__ == "JudgmentOutput":
             payload = json.loads(messages[1]["content"])
@@ -65,7 +78,13 @@ class ScriptedLLM:
                     "answer_space": proposal["answer_space"],
                     "wording_pattern": proposal["wording_pattern"],
                 }
-            return response_model(passed=True, uncertain=False, reason_codes=["pass"], facet_values=facets)
+            return response_model(
+                passed=True,
+                uncertain=False,
+                reason_codes=["pass"],
+                facet_values=facets,
+                concise_evidence="The question satisfies this rubric.",
+            )
         if response_model.__name__ == "RelationOutput":
             return response_model(
                 semantic_repeat=False,
@@ -76,11 +95,21 @@ class ScriptedLLM:
                 answer_space_relation="different",
                 aspect_relation="same",
                 wording_pattern_relation="different",
+                concise_evidence="The scenario and answer space are materially different.",
             )
         if response_model.__name__ == "ChallengeOutput":
-            return response_model(complete=True, uncertainty_reason_codes=[])
+            return response_model(
+                complete=True,
+                uncertainty_reason_codes=[],
+                concise_evidence="All required independent evidence is present.",
+            )
         if response_model.__name__ == "ThemeOutput":
-            return response_model(memberships=["identity"], uncertain=False, reason_codes=["direct_fit"])
+            return response_model(
+                memberships=["identity"],
+                uncertain=False,
+                reason_codes=["direct_fit"],
+                concise_evidence="The question directly concerns identity.",
+            )
         if response_model.__name__ == "TaxonomyCandidateOutput":
             return response_model(
                 facet="aspect",
@@ -88,6 +117,14 @@ class ScriptedLLM:
                 definition="Ways people return to a settled sense of self",
                 aliases=[],
                 exclusions=["generic relaxation"],
+                concise_evidence="The supports show a reusable cross-scenario aspect.",
+            )
+        if response_model.__name__ == "CoverageRegionOutput":
+            return response_model(
+                kind="exploratory",
+                uncertain=False,
+                reason_codes=["plausible"],
+                concise_evidence="The combination is meaningful but not universally required.",
             )
         raise AssertionError(response_model)
 
@@ -128,6 +165,27 @@ class AgentSystemTests(unittest.TestCase):
             self.assertEqual("gemini-3.5-flash-high", routing.preset_for(role))
         for role in ("clarity_openness_judge", "evidence_challenger", "theme_classifier"):
             self.assertEqual("gpt-5.4-mini-high", routing.preset_for(role))
+
+    def test_success_cache_is_config_bound_and_audited_in_current_run(self) -> None:
+        payload = {"enrichment_run_id": "run-a", "proposal": {"question": "Why?"}}
+        _, first = self.runner.invoke(
+            "clarity_openness_judge", "Judge it.", payload, JudgmentOutput
+        )
+        calls_after_first = len(self.calls)
+        payload["enrichment_run_id"] = "run-b"
+        _, reused = self.runner.invoke(
+            "clarity_openness_judge", "Judge it.", payload, JudgmentOutput
+        )
+        # Run identity is audit metadata, not semantic model input; reuse avoids
+        # another provider call while still creating a new run-linked envelope.
+        self.assertEqual(calls_after_first, len(self.calls))
+        self.assertEqual("cache_reused", reused.status)
+        self.assertNotEqual(first.invocation_id, reused.invocation_id)
+        self.assertEqual("run-b", reused.enrichment_run_id)
+        self.assertEqual(
+            first.invocation_id,
+            reused.provider_response_metadata["cache_source_invocation_id"],
+        )
 
     def test_proposal_group_runs_four_isolated_scouts_and_one_composer_each(self) -> None:
         batch = ProposalProduction(self.runner).propose(self.brief)
@@ -177,7 +235,7 @@ class AgentSystemTests(unittest.TestCase):
         concepts = [
             CreativeConcept(
                 f"c-{index}", f"brief-{index}", "aspect_scout", f"support {index}",
-                "unclassified", "restoration", f"scenario-{index % 3}", f"answer-{index % 2}", "unclassified",
+                "unclassified", f"perspective-{index % 2}", f"scenario-{index % 3}", f"answer-{index % 2}", "unclassified",
             )
             for index in range(6)
         ]
@@ -228,6 +286,65 @@ class AgentSystemTests(unittest.TestCase):
         relation_calls = [call for call in self.calls if call["role"] == "neighbor_relation_judge"]
         self.assertEqual(1, len(relation_calls))
         bank.close()
+
+    def test_coverage_plan_is_classified_by_independent_gpt_agents(self) -> None:
+        bank = QuestionBank(Path(self.tempdir.name) / "coverage-bank.sqlite3")
+        registry = TaxonomyRegistry(Path(self.tempdir.name) / "coverage-workflow.sqlite3")
+        version = registry.install_initial("coverage-taxonomy", ["self"], ["reflection"])
+        planner = CoveragePlanner(
+            Path(self.tempdir.name) / "coverage-workflow.sqlite3",
+            bank,
+            registry,
+            ["identity"],
+        )
+        review = HumanReview(Path(self.tempdir.name) / "coverage-workflow.sqlite3")
+        result = CoveragePlanAgentGroup(self.runner, planner, review).generate(
+            registry.definition_context(version.version_id),
+            {"identity": ["Questions about the storyteller's identity"]},
+        )
+        self.assertEqual("planned", result["status"])
+        coverage_calls = [call for call in self.calls if call["role"].startswith("coverage_region_")]
+        self.assertEqual(6, len(coverage_calls))
+        self.assertTrue(all(call["preset"] == "gpt-5.4-mini-high" for call in coverage_calls))
+        review.close()
+        planner.close()
+        registry.close()
+        bank.close()
+
+    def test_reference_expected_results_are_hidden_until_scoring(self) -> None:
+        registry = ReferenceExampleRegistry(
+            Path(self.tempdir.name) / "reference.sqlite3", minimum_confirmed=1
+        )
+        registry.import_examples(
+            [
+                {
+                    "example_id": "reference-1",
+                    "question": "What helps you settle after a difficult day?",
+                    "expected_decision": "accept",
+                    "neighbor_question": "Which ritual helps you recover after a hard day?",
+                    "expected_semantic_repeat": False,
+                }
+            ],
+            confirmed=True,
+        )
+        ReferenceRegressionEvaluator(self.runner, registry).run(
+            {"quality": "v1"},
+            {
+                "version_id": "taxonomy-reference-v1",
+                "aspects": [{"id": "reference_aspect"}],
+                "perspectives": [{"id": "reference_perspective"}],
+            },
+        )
+        reference_calls = [
+            call
+            for call in self.calls
+            if call["role"] in (*ModelRouting.EVALUATION_ROLES, "evidence_challenger", "neighbor_relation_judge")
+        ]
+        self.assertTrue(reference_calls)
+        self.assertTrue(
+            all("expected_decision" not in str(call["messages"]) for call in reference_calls)
+        )
+        registry.close()
 
 
 if __name__ == "__main__":

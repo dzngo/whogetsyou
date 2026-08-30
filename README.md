@@ -120,17 +120,18 @@ Initialize local relational stores:
 python -m question_bank --data-dir storage/question_bank init
 ```
 
-Install the human-confirmed initial Aspect/Perspective taxonomy and a JSON Coverage Plan before autonomous operation:
+Install the human-confirmed initial Aspect/Perspective taxonomy, then let independent GPT classifiers and a challenger create the complete Coverage Plan before autonomous operation:
 
 ```bash
 python -m question_bank --data-dir storage/question_bank taxonomy-install \
   --aspect self_understanding \
   --perspective restoration
 
-python -m question_bank --data-dir storage/question_bank coverage-plan-install \
-  --taxonomy-version <taxonomy-version-from-the-previous-command> \
-  --regions-file coverage-regions.json
+python -m question_bank --data-dir storage/question_bank coverage-plan-generate \
+  --taxonomy-version <taxonomy-version-from-the-previous-command>
 ```
+
+Uncertain region classifications enter the normal review queue and are resumed with `review-resolve <case> resolve_region --coverage-kind required|exploratory|invalid`. `coverage-plan-install` remains available for an explicitly human-confirmed complete matrix.
 
 Run one bounded enrichment brief against a fixed snapshot:
 
@@ -142,8 +143,10 @@ python -m question_bank --data-dir storage/question_bank enrich \
   --concepts-per-scout 5
 ```
 
-`autonomous` reads the current released taxonomy and Coverage Plan, selects the next gap itself, and stops at explicit iteration, proposal, or review-queue budgets. `--run-completion-challenge` enables the three-round/two-strategy saturation test when coverage is healthy. `--auto-publish` still fails closed unless the candidate passes taxonomy, coverage, distinctness, index-rebuild, policy-revalidation, Reference Example, and spot-check gates.
+`autonomous` reads the current released taxonomy and Coverage Plan, selects the next gap itself, and stops at explicit iteration, proposal, review-queue, or completion-challenge budgets. Once coverage is healthy and at least 144 concepts remain in the run budget, it automatically runs the three-round/two-strategy saturation test with separate half-targeted and half-open discovery runs. `--auto-publish` still fails closed unless the candidate passes taxonomy, coverage, distinctness, index-rebuild, policy-revalidation, Reference Example, and any required first/major-change spot-check gate.
 
-Reference Examples are imported separately—never from the existing eval corpus—then human-confirmed once and regression-tested under the exact release policy versions. `reference-import`, `reference-confirm`, and `reference-regression-record` manage those records.
+Reference Examples are imported separately—never from the existing eval corpus—then human-confirmed once and automatically regression-tested through the current GPT quality, challenge, and relation topology under the exact release policy versions. Expected outcomes stay hidden until scoring. `reference-import`, `reference-confirm`, and `reference-regression-record` manage those records.
+
+For the first release and any major policy/model change, record exactly ten distinct randomly selected human-reviewed revisions with `spot-check-record --checks-file checks.json`; pass the returned immutable `--spot-check-id` to `release-build` or `autonomous --auto-publish`. The JSON document records `checks`, the complete `candidate_revision_ids`, a reviewer pseudonym in `reviewer_id`, `selection_method: "random"`, and a reproducible `selection_seed`. The record is bound to that exact candidate revision set, so a boolean assertion or reused check cannot satisfy the production release gate.
 
 `review-list`, `review-resolve`, `release-build`, `release-verify`, `release-publish`, `release-rollback`, and `status` expose the remaining operator workflows. Human Accept resumes Theme classification and admission; a human edit creates a new proposal version and re-enters full evaluation. Run `python -m question_bank --help` for all arguments.

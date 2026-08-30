@@ -2,6 +2,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Sequence
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from models import resolve_llm_model
@@ -75,6 +76,19 @@ class BaseLLM(ABC):
 
     def __init__(self, model_name: str):
         self.model_name = model_name
+        self.timeout_seconds = 60
+        self.last_response_metadata: Dict[str, Any] = {}
+
+    def _capture_metadata(self, completion: Any) -> None:
+        self.last_response_metadata = {
+            key: value
+            for key, value in {
+                "response_id": getattr(completion, "id", None),
+                "reported_model": getattr(completion, "model", None),
+                "system_fingerprint": getattr(completion, "system_fingerprint", None),
+            }.items()
+            if value is not None
+        }
 
     @abstractmethod
     def parse_structured(self, messages: Sequence[Dict[str, str]], response_model: Any) -> Any:
@@ -90,7 +104,11 @@ class GeminiLLM(BaseLLM):
 
     def __init__(self, model: str, api_key: str, base_url: str, reasoning_effort: Optional[str] = None):
         super().__init__(model)
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
+        # AgentRunner owns the single permitted execution retry. Disable SDK
+        # retries so the audited attempt count is the real provider call count.
+        self._client = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=60.0, max_retries=0
+        )
         self._reasoning_effort = reasoning_effort
 
     def parse_structured(self, messages: Sequence[Dict[str, str]], response_model: Any) -> Any:
@@ -102,6 +120,7 @@ class GeminiLLM(BaseLLM):
         if self._reasoning_effort:
             request_kwargs["reasoning_effort"] = self._reasoning_effort
         completion = self._client.beta.chat.completions.parse(**request_kwargs)
+        self._capture_metadata(completion)
         return _safe_structured_parse(completion, response_model)
 
     def complete_text(self, messages: Sequence[Dict[str, str]]) -> str:
@@ -109,6 +128,7 @@ class GeminiLLM(BaseLLM):
         if self._reasoning_effort:
             request_kwargs["reasoning_effort"] = self._reasoning_effort
         completion = self._client.chat.completions.create(**request_kwargs)
+        self._capture_metadata(completion)
         return _completion_to_text(completion)
 
 
@@ -117,7 +137,7 @@ class OpenAILLM(BaseLLM):
 
     def __init__(self, model: str, api_key: str, reasoning_effort: Optional[str] = None):
         super().__init__(model)
-        self._client = OpenAI(api_key=api_key, timeout=60.0)
+        self._client = OpenAI(api_key=api_key, timeout=60.0, max_retries=0)
         self._reasoning_effort = reasoning_effort
 
     def parse_structured(self, messages: Sequence[Dict[str, str]], response_model: Any) -> Any:
@@ -129,6 +149,7 @@ class OpenAILLM(BaseLLM):
         if self._reasoning_effort:
             request_kwargs["reasoning"] = {"effort": self._reasoning_effort}
         completion = self._client.responses.parse(**request_kwargs)
+        self._capture_metadata(completion)
         return _safe_structured_parse(completion, response_model)
 
     def complete_text(self, messages: Sequence[Dict[str, str]]) -> str:
@@ -136,12 +157,16 @@ class OpenAILLM(BaseLLM):
         if self._reasoning_effort:
             request_kwargs["reasoning_effort"] = self._reasoning_effort
         completion = self._client.chat.completions.create(**request_kwargs)
+        self._capture_metadata(completion)
         return _completion_to_text(completion)
 
 
 def _get_secret(name: str) -> Optional[str]:
     """Return a credential from env vars or Streamlit secrets when available."""
     value = os.getenv(name)
+    if not value:
+        load_dotenv()
+        value = os.getenv(name)
     if value:
         return value
     import streamlit as st  # type: ignore

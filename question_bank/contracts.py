@@ -17,6 +17,16 @@ DEFAULT_POLICY_VERSIONS = {
     "semantic_detection": "neighbor-relation-v1",
     "theme_classification": "theme-classifier-v1",
     "agent_configuration": "agent-config-v1",
+    "safety": "safety-v1",
+    "source_permission": "source-permission-v1",
+    "coverage": "coverage-v1",
+    "release": "release-v1",
+    "revalidation": "whole-bank-revalidation-v1",
+    "lifecycle": "lifecycle-v1",
+    "scenario_family": "semantic-scenario-v1",
+    "lexical_projection": "lexical-v1",
+    "vector_projection": "hashed-ngram-vector-v1",
+    "semantic_fingerprint_projection": "semantic-fingerprint-v1",
 }
 
 
@@ -46,6 +56,7 @@ class EnrichmentBrief:
     taxonomy_version_id: str
     snapshot_id: str
     concepts_per_scout: int = 5
+    execution_run_id: str = ""
     version: int = SCHEMA_VERSION
 
 
@@ -60,7 +71,9 @@ class CreativeConcept:
     semantic_scenario: str
     answer_space: str
     taxonomy_status: str = "approved"
+    source_invocation_id: str = ""
     version: int = SCHEMA_VERSION
+    concise_evidence: str = ""
 
 
 @dataclass
@@ -85,6 +98,11 @@ class ProposalBatch:
     concepts: List[CreativeConcept]
     proposals: List[QuestionProposal]
     diverted_taxonomy_concepts: List[CreativeConcept] = field(default_factory=list)
+    failed_stage_items: List[str] = field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        return not self.failed_stage_items
 
 
 @dataclass(frozen=True)
@@ -97,6 +115,8 @@ class EnrichmentRunResult:
     review_case_ids: Tuple[str, ...]
     taxonomy_concept_ids: Tuple[str, ...]
     status: str
+    concept_count: int = 0
+    eligible_for_completion: bool = True
 
 
 @dataclass
@@ -115,6 +135,13 @@ class AgentInvocation:
     output_hash: str
     status: str
     concise_reason_codes: List[str] = field(default_factory=list)
+    enrichment_run_id: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    retry_count: int = 0
+    error_details: List[str] = field(default_factory=list)
+    provider_response_metadata: Dict[str, Any] = field(default_factory=dict)
+    concise_evidence: str = ""
 
 
 @dataclass
@@ -127,6 +154,7 @@ class SpecialistJudgment:
     reason_codes: List[str]
     facet_values: Dict[str, str] = field(default_factory=dict)
     invocation_id: str = ""
+    concise_evidence: str = ""
 
 
 @dataclass
@@ -153,6 +181,7 @@ class NeighborRelation:
     answer_space_relation: str = "unknown"
     aspect_relation: str = "unknown"
     wording_pattern_relation: str = "unknown"
+    concise_evidence: str = ""
 
 
 @dataclass
@@ -195,6 +224,7 @@ class ThemeClassification:
     resolved: bool
     classifier_invocation_ids: List[str]
     uncertainties: List[str] = field(default_factory=list)
+    concise_evidence: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -209,6 +239,8 @@ class AcceptedQuestionPackage:
         default_factory=lambda: dict(DEFAULT_POLICY_VERSIONS)
     )
     named_theme_ids: List[str] = field(default_factory=list)
+    approved_aspect_ids: List[str] = field(default_factory=list)
+    approved_perspective_ids: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -272,6 +304,8 @@ class HumanResolution:
     reason_codes: List[str]
     memberships: Optional[List[str]] = None
     edited_text: Optional[str] = None
+    coverage_kind: Optional[str] = None
+    taxonomy_change_package: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -292,6 +326,19 @@ class TaxonomyCandidate:
     supporting_concept_ids: List[str]
     aliases: List[str] = field(default_factory=list)
     exclusions: List[str] = field(default_factory=list)
+    positive_examples: List[str] = field(default_factory=list)
+    counterexamples: List[str] = field(default_factory=list)
+    closest_existing_taxa: List[str] = field(default_factory=list)
+    explicit_differences: List[str] = field(default_factory=list)
+    affected_taxon_ids: List[str] = field(default_factory=list)
+    proposed_operation: str = "add"
+    affected_revision_ids: List[str] = field(default_factory=list)
+    reclassification_plan: Dict[str, str] = field(default_factory=dict)
+    reference_regression_id: str = ""
+    revalidation_evidence_ids: List[str] = field(default_factory=list)
+    concise_evidence: str = ""
+    replacement_taxa: List[Dict[str, Any]] = field(default_factory=list)
+    independent_evidence: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -348,6 +395,10 @@ class ReleaseIntent:
     coverage_plan_id: str
     policy_versions: Dict[str, str]
     spot_check_passed: bool
+    spot_check_id: Optional[str] = None
+    retirement_revision_ids: List[str] = field(default_factory=list)
+    completion_record_id: Optional[str] = None
+    change_types: List[str] = field(default_factory=lambda: ["new_question"])
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,12 @@ def _stable_hash(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _revision_hash(revision: QuestionRevision) -> str:
+    payload = record_dict(revision)
+    payload.pop("lifecycle", None)
+    return _stable_hash(payload)
+
+
 class AdmissionDecider:
     """Fail-closed rules; LLM votes never directly create admission authority."""
 
@@ -188,7 +194,7 @@ class QuestionBank:
                 evidence_id=package.evidence.evidence_id,
                 provenance=package.proposal.provenance,
             )
-            content_hash = _stable_hash(record_dict(revision))
+            content_hash = _revision_hash(revision)
             self._connection.execute(
                 """INSERT INTO question_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
@@ -261,10 +267,37 @@ class QuestionBank:
         }
         if set(package.evidence.resolved_facets) != required_facets:
             raise ValueError("complete evaluator-resolved facets are required")
+        if package.evidence.resolved_facets["aspect_id"] not in package.approved_aspect_ids:
+            raise ValueError("evaluator-resolved Aspect is not approved by the Taxonomy Version")
+        if package.evidence.resolved_facets["perspective_id"] not in package.approved_perspective_ids:
+            raise ValueError("evaluator-resolved Perspective is not approved by the Taxonomy Version")
         if not package.proposal.provenance:
             raise ValueError("provenance is required")
+        QuestionBank._validate_provenance(package.proposal)
         if not package.policy_versions:
             raise ValueError("policy versions are required")
+
+    @staticmethod
+    def _validate_provenance(proposal: QuestionProposal) -> None:
+        required = {
+            "source_type",
+            "source_id",
+            "generating_system",
+            "creator_invocation_id",
+            "taxonomy_version_id",
+            "pipeline_version",
+            "created_at",
+            "enrichment_run_id",
+            "parent_inputs",
+            "rights_evidence",
+        }
+        missing = required - set(proposal.provenance)
+        if missing:
+            raise ValueError(f"incomplete Question Provenance: {', '.join(sorted(missing))}")
+        if proposal.provenance["source_type"] != proposal.source_permission:
+            raise ValueError("Question Provenance source type does not match source permission")
+        if proposal.source_permission == "de_novo" and proposal.provenance["rights_evidence"] != "project_generated_de_novo":
+            raise ValueError("de novo provenance requires project generation rights evidence")
 
     def retire(self, question_id: str, retirement: Dict[str, str]) -> LifecycleRecord:
         key = retirement["idempotency_key"]
@@ -309,12 +342,25 @@ class QuestionBank:
             ).fetchall()
         else:
             rows = self._connection.execute(
-                "SELECT revision_id, content_hash, lifecycle FROM question_revisions WHERE lifecycle != 'retired'"
+                """SELECT revision_id, content_hash, lifecycle
+                   FROM question_revisions revision
+                   WHERE lifecycle != 'retired'
+                     AND revision_number = (
+                         SELECT MAX(candidate.revision_number)
+                         FROM question_revisions candidate
+                         WHERE candidate.question_id = revision.question_id
+                           AND candidate.lifecycle != 'retired'
+                     )"""
             ).fetchall()
             revision_ids = tuple(sorted(row["revision_id"] for row in rows))
         if len(rows) != len(revision_ids):
             raise ValueError("snapshot contains unknown revision")
-        if any(row["lifecycle"] == "retired" for row in rows):
+        current_release_ids = self.current_release_revision_ids()
+        if any(
+            row["lifecycle"] == "retired"
+            and row["revision_id"] not in current_release_ids
+            for row in rows
+        ):
             raise ValueError("snapshot cannot contain retired revisions")
         if revision_ids:
             placeholders = ",".join("?" for _ in revision_ids)
@@ -334,6 +380,50 @@ class QuestionBank:
             )
         return QuestionBankSnapshot(snapshot_id, revision_ids, content_hash)
 
+    def working_snapshot(self, base_snapshot_id: Optional[str]) -> QuestionBankSnapshot:
+        """Overlay current staged work on an immutable released base for planning."""
+        base_by_question: Dict[str, sqlite3.Row] = {}
+        if base_snapshot_id:
+            manifest = self.snapshot_record(base_snapshot_id)
+            if manifest.revision_ids:
+                placeholders = ",".join("?" for _ in manifest.revision_ids)
+                for row in self._connection.execute(
+                    f"SELECT * FROM question_revisions WHERE revision_id IN ({placeholders})",
+                    manifest.revision_ids,
+                ):
+                    base_by_question[row["question_id"]] = row
+        staged_rows = self._connection.execute(
+            """SELECT * FROM question_revisions revision
+               WHERE lifecycle = 'staged' AND revision_number = (
+                   SELECT MAX(candidate.revision_number)
+                   FROM question_revisions candidate
+                   WHERE candidate.question_id = revision.question_id
+                     AND candidate.lifecycle = 'staged'
+               )"""
+        ).fetchall()
+        for row in staged_rows:
+            base_by_question[row["question_id"]] = row
+        manifest_rows = sorted(
+            (
+                (row["revision_id"], row["content_hash"])
+                for row in base_by_question.values()
+            ),
+            key=lambda item: item[0],
+        )
+        content_hash = _stable_hash(manifest_rows)
+        snapshot_id = f"snapshot-{content_hash[:20]}"
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO snapshots VALUES (?, ?, ?, 'working', CURRENT_TIMESTAMP)",
+                (snapshot_id, json.dumps(manifest_rows), content_hash),
+            )
+        return QuestionBankSnapshot(
+            snapshot_id,
+            tuple(item[0] for item in manifest_rows),
+            content_hash,
+            "working",
+        )
+
     def list_revisions(self, snapshot_id: Optional[str] = None) -> list[QuestionRevision]:
         if snapshot_id:
             row = self._connection.execute(
@@ -350,7 +440,38 @@ class QuestionBank:
             ).fetchall()
         else:
             rows = self._connection.execute("SELECT * FROM question_revisions").fetchall()
-        return [self._row_to_revision(dict(row)) for row in rows]
+        revisions = [self._row_to_revision(dict(row)) for row in rows]
+        if snapshot_id and set(revision.revision_id for revision in revisions) == set(
+            self.current_release_revision_ids()
+        ):
+            revisions = [
+                QuestionRevision(
+                    **{**record_dict(revision), "theme_memberships": revision.theme_memberships, "lifecycle": "active"}
+                )
+                for revision in revisions
+            ]
+        return revisions
+
+    def current_release_revision_ids(self) -> set[str]:
+        """Return the lifecycle projection selected by the atomic release pointer."""
+        tables = {
+            row[0]
+            for row in self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if not {"release_pointer", "release_candidates"}.issubset(tables):
+            return set()
+        row = self._connection.execute(
+            """SELECT snapshots.manifest_json
+               FROM release_pointer
+               JOIN release_candidates
+                 ON release_candidates.candidate_snapshot_id = release_pointer.snapshot_id
+               JOIN snapshots
+                 ON snapshots.snapshot_id = release_candidates.bank_snapshot_id
+               WHERE release_pointer.singleton = 1"""
+        ).fetchone()
+        return {item[0] for item in json.loads(row[0])} if row else set()
 
     def set_snapshot_status(self, snapshot_id: str, status: str) -> None:
         with self._connection:
@@ -386,6 +507,77 @@ class QuestionBank:
         if not row:
             raise KeyError(revision_id)
         return json.loads(row[0])
+
+    def verify_snapshot_content(self, snapshot_id: str) -> bool:
+        row = self._connection.execute(
+            "SELECT manifest_json FROM snapshots WHERE snapshot_id = ?", (snapshot_id,)
+        ).fetchone()
+        if not row:
+            raise KeyError(snapshot_id)
+        for revision_id, expected_hash in json.loads(row[0]):
+            revision_row = self._connection.execute(
+                "SELECT * FROM question_revisions WHERE revision_id = ?", (revision_id,)
+            ).fetchone()
+            if not revision_row:
+                return False
+            if _revision_hash(self._row_to_revision(dict(revision_row))) != expected_hash:
+                return False
+        return True
+
+    def apply_release_lifecycle(
+        self,
+        transaction: sqlite3.Connection,
+        snapshot_id: str,
+        retirement_revision_ids: Iterable[str],
+    ) -> None:
+        """Apply allowed lifecycle transitions inside the caller's release transaction."""
+        manifest_row = transaction.execute(
+            "SELECT manifest_json FROM snapshots WHERE snapshot_id = ?", (snapshot_id,)
+        ).fetchone()
+        if not manifest_row:
+            raise KeyError(snapshot_id)
+        revision_ids = [item[0] for item in json.loads(manifest_row[0])]
+        if not revision_ids:
+            return
+        retirement_ids = sorted(set(retirement_revision_ids))
+        retiring = []
+        if retirement_ids:
+            retirement_placeholders = ",".join("?" for _ in retirement_ids)
+            retiring = transaction.execute(
+                f"""SELECT question_id, revision_id FROM question_revisions
+                    WHERE lifecycle = 'active' AND revision_id IN ({retirement_placeholders})""",
+                retirement_ids,
+            ).fetchall()
+            transaction.execute(
+                f"""UPDATE question_revisions SET lifecycle = 'retired'
+                    WHERE lifecycle = 'active' AND revision_id IN ({retirement_placeholders})""",
+                retirement_ids,
+            )
+        placeholders = ",".join("?" for _ in revision_ids)
+        activating = transaction.execute(
+            f"""SELECT question_id, revision_id FROM question_revisions
+                WHERE lifecycle = 'staged' AND revision_id IN ({placeholders})""",
+            revision_ids,
+        ).fetchall()
+        transaction.execute(
+            f"""UPDATE question_revisions SET lifecycle = 'active'
+                WHERE revision_id IN ({placeholders}) AND lifecycle = 'staged'""",
+            revision_ids,
+        )
+        for revision in retiring:
+            transaction.execute(
+                """INSERT INTO lifecycle_events(
+                       event_id, question_id, revision_id, from_state, to_state, reason
+                   ) VALUES (?, ?, ?, 'active', 'retired', 'explicit_release_retirement')""",
+                (f"life-{uuid.uuid4().hex}", revision["question_id"], revision["revision_id"]),
+            )
+        for revision in activating:
+            transaction.execute(
+                """INSERT INTO lifecycle_events(
+                       event_id, question_id, revision_id, from_state, to_state, reason
+                   ) VALUES (?, ?, ?, 'staged', 'active', 'published_release')""",
+                (f"life-{uuid.uuid4().hex}", revision["question_id"], revision["revision_id"]),
+            )
 
     def _command_result(self, key: str) -> Optional[Dict[str, Any]]:
         row = self._connection.execute("SELECT result_json FROM command_results WHERE command_key = ?", (key,)).fetchone()

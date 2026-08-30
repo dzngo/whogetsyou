@@ -42,6 +42,11 @@ class OrchestratorTests(unittest.TestCase):
                 bank,
                 review,
                 ["identity", "wellbeing"],
+                lambda version_id: {
+                    "version_id": version_id,
+                    "aspects": [{"id": "self_understanding"}],
+                    "perspectives": [{"id": "restoration"}],
+                },
             )
             brief = EnrichmentBrief(
                 "brief-1", "run-key-1", QuestionLevel.DEEP,
@@ -77,6 +82,11 @@ class OrchestratorTests(unittest.TestCase):
                 bank,
                 review,
                 ["identity"],
+                lambda version_id: {
+                    "version_id": version_id,
+                    "aspects": [{"id": "self_understanding"}],
+                    "perspectives": [{"id": "restoration"}],
+                },
             )
             package = accepted_package()
             package.outcome.decision = AdmissionDecision.HUMAN_REVIEW

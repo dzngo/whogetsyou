@@ -27,7 +27,20 @@ def accepted_package(idempotency_key: str = "admit-1") -> AcceptedQuestionPackag
         answer_space="a personally meaningful repeatable ritual",
         wording_pattern="open what-question",
         source_permission="de_novo",
-        provenance={"concept_id": "concept-1", "composer_invocation_id": "inv-1"},
+        provenance={
+            "concept_id": "concept-1",
+            "composer_invocation_id": "inv-1",
+            "source_type": "de_novo",
+            "source_id": "concept-1",
+            "generating_system": "question-bank-multi-agent-pipeline",
+            "creator_invocation_id": "inv-1",
+            "taxonomy_version_id": "taxonomy-v1",
+            "pipeline_version": "question-enrichment-v1",
+            "created_at": "2026-08-30T00:00:00+00:00",
+            "enrichment_run_id": "run-test",
+            "parent_inputs": ["concept-1"],
+            "rights_evidence": "project_generated_de_novo",
+        },
     )
     evidence = EvaluationEvidence(
         evidence_id="evidence-1",
@@ -68,6 +81,8 @@ def accepted_package(idempotency_key: str = "admit-1") -> AcceptedQuestionPackag
         theme_classification=themes,
         taxonomy_version_id="taxonomy-v1",
         named_theme_ids=["identity", "wellbeing"],
+        approved_aspect_ids=["self_understanding"],
+        approved_perspective_ids=["restoration"],
     )
 
 
@@ -108,6 +123,12 @@ class QuestionBankTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "theme classification"):
             self.bank.admit(package)
 
+    def test_rejects_taxa_not_approved_by_the_pinned_version(self) -> None:
+        package = accepted_package()
+        package.evidence.resolved_facets["aspect_id"] = "invented_aspect"
+        with self.assertRaisesRegex(ValueError, "Aspect is not approved"):
+            self.bank.admit(package)
+
     def test_revision_preserves_identity_and_snapshot_is_reproducible(self) -> None:
         first = self.bank.admit(accepted_package())
         revised_package = accepted_package("revise-1")
@@ -124,6 +145,18 @@ class QuestionBankTests(unittest.TestCase):
         self.assertEqual(snapshot_a.content_hash, snapshot_b.content_hash)
         with self.assertRaisesRegex(ValueError, "one revision"):
             self.bank.snapshot({"revision_ids": [first.revision_id, second.revision_id]})
+
+    def test_working_snapshot_uses_only_latest_revision_per_question(self) -> None:
+        first = self.bank.admit(accepted_package("admit-latest-1"))
+        updated_package = accepted_package("admit-latest-2")
+        updated_package.proposal.proposal_id = "proposal-latest-2"
+        updated_package.proposal.text = "Which place helps you feel restored?"
+        updated_package.evidence.proposal_id = updated_package.proposal.proposal_id
+        updated_package.outcome.proposal_id = updated_package.proposal.proposal_id
+        updated_package.theme_classification.proposal_id = updated_package.proposal.proposal_id
+        second = self.bank.revise(first.question_id, updated_package)
+        snapshot = self.bank.snapshot({})
+        self.assertEqual((second.revision_id,), snapshot.revision_ids)
 
 
 if __name__ == "__main__":

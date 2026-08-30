@@ -6,7 +6,7 @@ import json
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Callable, Dict, Sequence
+from typing import Callable, Dict, Mapping, Sequence
 
 from question_bank.agents import ProposalEvaluation, ProposalProduction, ThemeClassifier
 from question_bank.contracts import (
@@ -39,8 +39,11 @@ class PipelineOrchestrator:
         theme_classifier: ThemeClassifier,
         question_bank: QuestionBank,
         human_review: HumanReview,
-        named_themes: Sequence[str],
+        named_themes: Sequence[str] | Mapping[str, Sequence[str]],
         taxonomy_context_provider: Callable[[str], Dict] | None = None,
+        taxonomy_review_resolver: Callable[[str, str, Dict, HumanResolution], Dict]
+        | None = None,
+        coverage_review_resolver: Callable[[str, str, str], Dict] | None = None,
     ) -> None:
         self._db = sqlite3.connect(str(database_path))
         self._db.row_factory = sqlite3.Row
@@ -74,6 +77,11 @@ class PipelineOrchestrator:
                 concept_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS stage_requeue (
+                item_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, stage_item TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
         self._db.commit()
@@ -82,7 +90,12 @@ class PipelineOrchestrator:
         self._themes = theme_classifier
         self._bank = question_bank
         self._review = human_review
-        self._named_themes = list(named_themes)
+        self._theme_definitions = (
+            {theme: list(definition) for theme, definition in named_themes.items()}
+            if isinstance(named_themes, Mapping)
+            else {theme: [] for theme in named_themes}
+        )
+        self._named_themes = list(self._theme_definitions)
         self._taxonomy_context_provider = taxonomy_context_provider or (
             lambda version_id: {
                 "version_id": version_id,
@@ -90,33 +103,52 @@ class PipelineOrchestrator:
                 "perspectives": [],
             }
         )
+        self._taxonomy_review_resolver = taxonomy_review_resolver
+        self._coverage_review_resolver = coverage_review_resolver
 
     def close(self) -> None:
         self._db.close()
 
     def run_enrichment(self, enrichment_brief: EnrichmentBrief) -> EnrichmentRunResult:
         existing = self._db.execute(
-            "SELECT result_json FROM enrichment_runs WHERE idempotency_key = ? AND status = 'completed'",
+            "SELECT run_id, result_json, status FROM enrichment_runs WHERE idempotency_key = ?",
             (enrichment_brief.idempotency_key,),
         ).fetchone()
-        if existing:
-            return self._result(json.loads(existing[0]))
-        run_id = f"run-{uuid.uuid4().hex}"
+        if existing and existing["status"] == "completed":
+            return self._result(json.loads(existing["result_json"]))
+        run_id = existing["run_id"] if existing else f"run-{uuid.uuid4().hex}"
         with self._db:
-            self._db.execute(
-                "INSERT INTO enrichment_runs VALUES (?, ?, ?, ?, NULL, 'running', CURRENT_TIMESTAMP)",
-                (
-                    run_id,
-                    enrichment_brief.idempotency_key,
-                    json.dumps(record_dict(enrichment_brief), sort_keys=True),
-                    enrichment_brief.snapshot_id,
-                ),
-            )
+            if existing:
+                self._db.execute(
+                    "UPDATE enrichment_runs SET status = 'running' WHERE run_id = ?",
+                    (run_id,),
+                )
+                self._db.execute("DELETE FROM stage_requeue WHERE run_id = ?", (run_id,))
+            else:
+                self._db.execute(
+                    "INSERT INTO enrichment_runs VALUES (?, ?, ?, ?, NULL, 'running', CURRENT_TIMESTAMP)",
+                    (
+                        run_id,
+                        enrichment_brief.idempotency_key,
+                        json.dumps(record_dict(enrichment_brief), sort_keys=True),
+                        enrichment_brief.snapshot_id,
+                    ),
+                )
+        enrichment_brief.execution_run_id = run_id
         accepted = []
         rejected = []
         reviews = []
         batch = self._proposal.propose(enrichment_brief)
         with self._db:
+            for stage_item in batch.failed_stage_items:
+                self._db.execute(
+                    "INSERT OR IGNORE INTO stage_requeue VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)",
+                    (
+                        f"requeue-{_stable_hash([run_id, stage_item])[:20]}",
+                        run_id,
+                        stage_item,
+                    ),
+                )
             for concept in batch.concepts + batch.diverted_taxonomy_concepts:
                 self._db.execute(
                     "INSERT OR IGNORE INTO creative_concepts VALUES (?, ?, ?)",
@@ -171,7 +203,7 @@ class PipelineOrchestrator:
                     ).case_id
                 )
                 continue
-            classification = self._themes.classify(proposal, self._named_themes)
+            classification = self._themes.classify(proposal, self._theme_definitions)
             with self._db:
                 self._db.execute(
                     "INSERT OR IGNORE INTO theme_classifications VALUES (?, ?, ?)",
@@ -209,6 +241,8 @@ class PipelineOrchestrator:
                     classification,
                     enrichment_brief.taxonomy_version_id,
                     named_theme_ids=self._named_themes,
+                    approved_aspect_ids=self._approved_taxa(enrichment_brief.taxonomy_version_id)[0],
+                    approved_perspective_ids=self._approved_taxa(enrichment_brief.taxonomy_version_id)[1],
                 )
             )
             accepted.append(revision.revision_id)
@@ -220,12 +254,14 @@ class PipelineOrchestrator:
             tuple(rejected),
             tuple(reviews),
             tuple(concept.concept_id for concept in batch.diverted_taxonomy_concepts),
-            "completed",
+            "completed" if batch.complete else "partial",
+            len(batch.concepts) + len(batch.diverted_taxonomy_concepts),
+            batch.complete,
         )
         with self._db:
             self._db.execute(
-                "UPDATE enrichment_runs SET result_json = ?, status = 'completed' WHERE run_id = ?",
-                (json.dumps(record_dict(result), sort_keys=True), run_id),
+                "UPDATE enrichment_runs SET result_json = ?, status = ? WHERE run_id = ?",
+                (json.dumps(record_dict(result), sort_keys=True), result.status, run_id),
             )
         return result
 
@@ -234,6 +270,52 @@ class PipelineOrchestrator:
         case = self._review.get_case(case_id)
         if resolution.action == "edit" and not resolution.edited_text:
             raise ValueError("edited_text is required for an edit resolution")
+        if case.case_type == "taxonomy":
+            if resolution.action not in {"accept", "reject"}:
+                raise ValueError("taxonomy review supports accept or reject")
+            if self._taxonomy_review_resolver is None:
+                raise RuntimeError("taxonomy review resolver is not configured")
+            self._review.begin_resolution(case_id, resolution)
+            try:
+                resumed = self._taxonomy_review_resolver(
+                    case.packet["candidate"]["candidate_id"],
+                    resolution.action,
+                    case.packet,
+                    resolution,
+                )
+            except Exception as error:
+                self._review.mark_resolution_retryable(
+                    case_id, resolution, type(error).__name__
+                )
+                raise
+            resolution_result = self._review.complete_resolution(case_id, resolution)
+            return {
+                "resolution": record_dict(resolution_result),
+                "status": "taxonomy_released" if resolution.action == "accept" else "rejected",
+                **resumed,
+            }
+        if case.case_type == "coverage_region":
+            if resolution.action != "resolve_region" or not resolution.coverage_kind:
+                raise ValueError("coverage review requires resolve_region and coverage_kind")
+            if self._coverage_review_resolver is None:
+                raise RuntimeError("coverage review resolver is not configured")
+            self._review.begin_resolution(case_id, resolution)
+            try:
+                resumed = self._coverage_review_resolver(
+                    case.packet["draft_id"],
+                    case.packet["region_id"],
+                    resolution.coverage_kind,
+                )
+            except Exception as error:
+                self._review.mark_resolution_retryable(
+                    case_id, resolution, type(error).__name__
+                )
+                raise
+            resolution_result = self._review.complete_resolution(case_id, resolution)
+            return {
+                "resolution": record_dict(resolution_result),
+                **resumed,
+            }
         if case.case_type == "theme_classification" and resolution.action not in {
             "resolve_themes",
             "edit",
@@ -256,10 +338,10 @@ class PipelineOrchestrator:
                 raise ValueError("Random is not a stored Theme Membership")
             if not memberships.issubset(set(self._named_themes)):
                 raise ValueError("human resolution contains an unknown Named Theme")
-        resolution_result = self._review.resolve(case_id, resolution)
-        response = {"resolution": record_dict(resolution_result), "status": "resolved"}
+        provisional = self._review.begin_resolution(case_id, resolution)
+        response = {"resolution": record_dict(provisional), "status": "resolved"}
         if resolution.action in {"reject", "hold"}:
-            return response
+            return self._finalize_review(case_id, resolution, response)
         packet = case.packet
         if resolution.action == "edit":
             assert resolution.edited_text is not None
@@ -276,18 +358,26 @@ class PipelineOrchestrator:
                 answer_space=proposal.answer_space,
                 wording_pattern=proposal.wording_pattern,
                 source_permission=proposal.source_permission,
-                provenance={**proposal.provenance, "edited_from": proposal.proposal_id, "human_resolution_id": resolution_result.resolution_id},
+                provenance={**proposal.provenance, "edited_from": proposal.proposal_id, "human_resolution_id": provisional.resolution_id},
             )
-            self._persist_proposal(f"human-edit-{case_id}", edited)
-            evaluation = self._evaluation.evaluate(
-                edited,
-                {
-                    "snapshot_id": packet["snapshot_id"],
-                    "taxonomy_version_id": packet["taxonomy_version_id"],
-                    "taxonomy_definitions": self._taxonomy_context_provider(
-                        packet["taxonomy_version_id"]
-                    ),
-                },
+            self._review_step(
+                case_id,
+                resolution,
+                lambda: self._persist_proposal(f"human-edit-{case_id}", edited),
+            )
+            evaluation = self._review_step(
+                case_id,
+                resolution,
+                lambda: self._evaluation.evaluate(
+                    edited,
+                    {
+                        "snapshot_id": packet["snapshot_id"],
+                        "taxonomy_version_id": packet["taxonomy_version_id"],
+                        "taxonomy_definitions": self._taxonomy_context_provider(
+                            packet["taxonomy_version_id"]
+                        ),
+                    },
+                ),
             )
             self._persist_evaluation(evaluation)
             if evaluation.outcome.decision != AdmissionDecision.ACCEPT:
@@ -300,43 +390,54 @@ class PipelineOrchestrator:
                     )
                     response["followup_review_case_id"] = followup.case_id
                 response["status"] = evaluation.outcome.decision.value
-                return response
-            return self._finish_accepted_review(
-                edited,
-                evaluation.evidence,
-                evaluation.outcome,
-                packet["taxonomy_version_id"],
-                packet["snapshot_id"],
-                response,
+                return self._finalize_review(case_id, resolution, response)
+            response = self._review_step(
+                case_id,
+                resolution,
+                lambda: self._finish_accepted_review(
+                    edited,
+                    evaluation.evidence,
+                    evaluation.outcome,
+                    packet["taxonomy_version_id"],
+                    packet["snapshot_id"],
+                    response,
+                ),
             )
+            return self._finalize_review(case_id, resolution, response)
         proposal = self._proposal_from_dict(packet["proposal"])
         evidence = self._evidence_from_dict(packet["evidence"])
         outcome = self._outcome_from_dict(packet["outcome"])
         if case.case_type == "theme_classification" and resolution.action == "resolve_themes":
             classification = ThemeClassification(
-                f"human-themes-{resolution_result.resolution_id}",
+                f"human-themes-{provisional.resolution_id}",
                 proposal.proposal_id,
                 sorted(set(resolution.memberships or [])),
                 True,
                 [],
                 [],
             )
-            revision = self._bank.admit(
-                AcceptedQuestionPackage(
-                    f"human-theme-admit-{resolution_result.resolution_id}",
-                    proposal,
-                    evidence,
-                    outcome,
-                    classification,
-                    packet["taxonomy_version_id"],
-                    named_theme_ids=self._named_themes,
-                )
+            revision = self._review_step(
+                case_id,
+                resolution,
+                lambda: self._bank.admit(
+                    AcceptedQuestionPackage(
+                        f"human-theme-admit-{provisional.resolution_id}",
+                        proposal,
+                        evidence,
+                        outcome,
+                        classification,
+                        packet["taxonomy_version_id"],
+                        named_theme_ids=self._named_themes,
+                        approved_aspect_ids=self._approved_taxa(packet["taxonomy_version_id"])[0],
+                        approved_perspective_ids=self._approved_taxa(packet["taxonomy_version_id"])[1],
+                    )
+                ),
             )
             response.update({"status": "admitted", "revision_id": revision.revision_id})
-            return response
+            return self._finalize_review(case_id, resolution, response)
         if case.case_type == "admission" and resolution.action == "accept":
             human_outcome = AdmissionOutcome(
-                f"human-outcome-{resolution_result.resolution_id}",
+                f"human-outcome-{provisional.resolution_id}",
                 proposal.proposal_id,
                 AdmissionDecision.ACCEPT,
                 "human",
@@ -344,24 +445,52 @@ class PipelineOrchestrator:
                 resolution.reason_codes,
                 outcome.outcome_id,
             )
-            return self._finish_accepted_review(
-                proposal,
-                evidence,
-                human_outcome,
-                packet["taxonomy_version_id"],
-                packet["snapshot_id"],
-                response,
+            response = self._review_step(
+                case_id,
+                resolution,
+                lambda: self._finish_accepted_review(
+                    proposal,
+                    evidence,
+                    human_outcome,
+                    packet["taxonomy_version_id"],
+                    packet["snapshot_id"],
+                    response,
+                ),
             )
+            return self._finalize_review(case_id, resolution, response)
         raise ValueError("resolution action does not match the review case type")
+
+    def _review_step(self, case_id: str, resolution: HumanResolution, callback):
+        try:
+            return callback()
+        except Exception as error:
+            self._review.mark_resolution_retryable(
+                case_id, resolution, type(error).__name__
+            )
+            raise
 
     def pending_taxonomy_support(self, limit: int = 6):
         rows = self._db.execute(
             """SELECT q.payload_json FROM taxonomy_concept_queue q
                LEFT JOIN taxonomy_concept_consumptions c ON c.concept_id = q.concept_id
-               WHERE c.concept_id IS NULL ORDER BY q.rowid LIMIT ?""",
-            (limit,),
+               WHERE c.concept_id IS NULL ORDER BY q.rowid LIMIT 200""",
         ).fetchall()
-        return [CreativeConcept(**json.loads(row[0])) for row in rows]
+        groups: Dict[tuple[str, ...], list[CreativeConcept]] = {}
+        for row in rows:
+            concept = CreativeConcept(**json.loads(row[0]))
+            status = concept.taxonomy_status.lower()
+            key: tuple[str, ...]
+            if "aspect" in status:
+                key = ("aspect", concept.aspect_id)
+            elif "perspective" in status:
+                key = ("perspective", concept.perspective_id)
+            else:
+                key = (status, concept.aspect_id, concept.perspective_id)
+            groups.setdefault(key, []).append(concept)
+        eligible = [group for group in groups.values() if len(group) >= limit]
+        if not eligible:
+            return []
+        return sorted(eligible, key=lambda group: group[0].concept_id)[0][:limit]
 
     def mark_taxonomy_support_consumed(self, concept_ids, candidate_id: str) -> None:
         with self._db:
@@ -393,7 +522,7 @@ class PipelineOrchestrator:
         snapshot_id,
         response,
     ):
-        classification = self._themes.classify(proposal, self._named_themes)
+        classification = self._themes.classify(proposal, self._theme_definitions)
         if not classification.resolved:
             case = self._review.open_case(
                 ReviewRequest(
@@ -425,9 +554,16 @@ class PipelineOrchestrator:
                 classification,
                 taxonomy_version_id,
                 named_theme_ids=self._named_themes,
+                approved_aspect_ids=self._approved_taxa(taxonomy_version_id)[0],
+                approved_perspective_ids=self._approved_taxa(taxonomy_version_id)[1],
             )
         )
         response.update({"status": "admitted", "revision_id": revision.revision_id})
+        return response
+
+    def _finalize_review(self, case_id, resolution, response):
+        resolution_result = self._review.complete_resolution(case_id, resolution)
+        response["resolution"] = record_dict(resolution_result)
         return response
 
     def _persist_proposal(self, run_id, proposal) -> None:
@@ -437,6 +573,15 @@ class PipelineOrchestrator:
                 "INSERT OR IGNORE INTO proposals VALUES (?, ?, ?, ?)",
                 (proposal.proposal_id, run_id, json.dumps(payload, sort_keys=True), json.dumps(proposal.provenance, sort_keys=True)),
             )
+
+    def _approved_taxa(self, version_id: str) -> tuple[list[str], list[str]]:
+        context = self._taxonomy_context_provider(version_id)
+        return (
+            [taxon["id"] for taxon in context.get("aspects", [])],
+            [
+                taxon["id"] for taxon in context.get("perspectives", [])
+            ],
+        )
 
     def _persist_evaluation(self, evaluation) -> None:
         with self._db:
@@ -500,4 +645,5 @@ class PipelineOrchestrator:
         return EnrichmentRunResult(
             raw["run_id"], raw["brief_id"], tuple(raw["proposal_ids"]), tuple(raw["accepted_revision_ids"]),
             tuple(raw["rejected_proposal_ids"]), tuple(raw["review_case_ids"]), tuple(raw["taxonomy_concept_ids"]), raw["status"],
+            raw.get("concept_count", 0), raw.get("eligible_for_completion", True),
         )
