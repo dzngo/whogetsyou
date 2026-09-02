@@ -68,9 +68,17 @@ _Avoid_: Suggested Answers, generated answers
 The linguistic form of a question independently of its meaning, such as a situational `what do you do first` frame or a forced choice.
 _Avoid_: Semantic Scenario, Question Perspective
 
+**Semantic Repeat**:
+The bank-quality conflict where two questions substantially overlap in Semantic Scenario, Question Perspective, and Answer Space. A shared Question Aspect or Wording Pattern alone does not make questions Semantic Repeats.
+_Avoid_: exact duplicate, shared topic, similar wording
+
 **Bounded Openness**:
 A question quality where the prompt is concrete enough to invite a short, immediate answer while leaving room for different players to answer differently.
 _Avoid_: Generic question, narrow question
+
+**Question Quality Floor**:
+The minimum trust contract for a Question Bank entry: it is clear, answerable, emotionally safe, correct for its Level, personally revealing when Deep, and not a semantic repeat of the bank. Taxonomy completeness, abstract coverage, and evaluator consensus are not part of the Question Quality Floor.
+_Avoid_: quality score, taxonomy completeness, coverage target
 
 **Question Angle Catalog**:
 The legacy curated set of Question Angles for each Theme and Level used by the current real-time generator. It may seed future proposal work but is not the Question Bank's classification taxonomy.
@@ -84,6 +92,10 @@ _Avoid_: Question Angle Catalog, prompt library
 One immutable version of a trusted Question Bank entry. A stable Question ID may have multiple Question Revisions, but only one revision is current in a given Question Bank Snapshot; changing a revision never overwrites its history.
 _Avoid_: Question Candidate, mutable question row
 
+**Staged Question**:
+A trusted question that has passed the Question Quality Floor but is not yet part of a Question Bank Release. Its classification metadata may still be pending without weakening the trust in its question text.
+_Avoid_: Question Candidate, published question
+
 **Question Bank Snapshot**:
 An immutable, versioned selection of exact Question Revisions and taxonomy definitions. A snapshot makes evaluation and later gameplay integration reproducible even after questions are corrected or retired.
 _Avoid_: live query result, Question Bank
@@ -92,13 +104,37 @@ _Avoid_: live query result, Question Bank
 The atomic publication of one verified Question Bank Snapshot as the current trusted corpus. A release records its gates and may later be rolled back or marked Withdrawn without mutating the snapshot.
 _Avoid_: deployment of the enrichment pipeline, mutable bank
 
-**Coverage Region**:
-A meaningful Named Theme + Level + Question Aspect + Question Perspective combination used to measure Question Bank breadth. Semantic Scenario, Answer Space, and Wording Pattern measure variety inside the region rather than multiplying into more coverage axes.
-_Avoid_: Candidate Set, every possible taxonomy combination
+**Release Spot Check**:
+The bounded human inspection of a deterministic sample of otherwise accepted questions and their most suspicious neighbours before a Question Bank Release. Its reviewed questions consume the production campaign's protected human-review slots.
+_Avoid_: full-bank revalidation, random informal review
 
-**Coverage Plan**:
-The versioned classification of possible Coverage Regions as Required, Exploratory, or Invalid for one Taxonomy Version. It defines what healthy bank coverage means without treating raw question count as completion.
-_Avoid_: generation quota, retrieval policy
+**Legacy Coverage Region**:
+A retired bootstrap-generation target from version 1. Version 2 does not create, classify, review, or complete Coverage Regions; the 418 unresolved legacy cases remain audit-only in the Legacy Archive.
+_Avoid_: current generation target, human-review input, release requirement
+
+**Legacy Coverage Plan**:
+A retired version-1 plan built from Coverage Regions. Version 2 replaces it with local Observed Diversity Feedback computed only after questions are staged.
+_Avoid_: bootstrap prerequisite, current pipeline state, generation quota
+
+**Diversity Feedback**:
+A compact advisory summary of repeated patterns observed in Staged Questions and released Question Revisions. It may encourage later creative batches to explore different semantic territory but never creates quotas or admission requirements.
+_Avoid_: Coverage Plan, generation target, quality gate
+
+**Bootstrap Enrichment**:
+The initial construction of a Question Bank by generating and evaluating concrete questions before deriving coverage guidance from the accepted corpus.
+_Avoid_: Coverage Plan generation, taxonomy matrix completion
+
+**Enrichment Budget**:
+The explicit maximum worst-case list-price exposure that the Question Enrichment Pipeline may authorize for one run, together with its provider-attempt allowance. It is an application safety contract rather than a promise that the provider invoice will equal the ledger. Reaching it stops new model work without weakening the Question Quality Floor.
+_Avoid_: exact invoice guarantee, advisory estimate, unlimited retry allowance
+
+**Budget Reservation**:
+The worst-case list-price amount atomically held from an Enrichment Budget before one provider attempt is sent. A successful response reconciles the reservation against native provider usage; a cached application result needs no reservation.
+_Avoid_: provider spend cap, estimated invoice after the call
+
+**Unknown Spend**:
+A Budget Reservation retained after a timeout, crash, transport ambiguity, unexpected model identity, or other outcome whose billable usage cannot be safely reconciled. Unknown Spend continues to consume the Enrichment Budget until authoritative evidence resolves it.
+_Avoid_: zero-cost failure, automatic retry allowance
 
 **Question Enrichment Pipeline**:
 The automated process that grows and maintains the Question Bank by proposing, challenging, evaluating, deduplicating, and admitting Canonical Questions.
@@ -112,20 +148,25 @@ _Avoid_: persistent persona, deterministic Module
 The versioned execution contract for one LLM Agent role, including model identity, reasoning effort, prompts, schemas, context policy, rubric or taxonomy version, timeout, and retry limit.
 _Avoid_: untracked prompt, model alias alone
 
-**Creative Concept**:
-A structured, prewording proposal combining one Question Aspect, Semantic Scenario, Question Perspective, and Answer Space. Independent scouts create and compare Creative Concepts before a composer writes question text.
-_Avoid_: Question Candidate, draft question
+**Creative Strategy**:
+One of four isolated Gemini agent missions—concrete life moments, relational mirrors, tensions/trade-offs, or inner signals. Each agent returns exactly five finished question texts with no Theme or classification metadata.
+_Avoid_: Coverage Region, prewording concept, taxonomy quota
 
 **Question Provenance**:
 The immutable ancestry and rights record for a question proposal or Question Bank entry, including its origin, transformations, responsible human or agent, model and policy versions, and license or consent evidence.
 _Avoid_: Generation metadata, audit log
 
 **Human Review Queue**:
-The collection of question proposals, post-accept Theme classifications, and taxonomy decisions that the Question Enrichment Pipeline cannot confidently resolve. Each queued case retains its subject, metadata, agent judgments, disagreements, and reason for requiring human evaluation.
-_Avoid_: Question Bank, rejected questions
+The bounded collection of Review Packets for concrete question-specific uncertainty that remains after automated escalation. At most ten distinct questions per 200-question production campaign may receive human review; operational failures, abstract Coverage Regions, and speculative taxonomy combinations never enter the queue during Bootstrap Enrichment.
+_Avoid_: Question Bank, rejected questions, failure log, coverage backlog
+
+**Review Packet**:
+The consolidated, versioned question text and concise evidence a human needs to resolve every reviewable uncertainty known for one question. Multiple uncertainties for the same question consume one human-review slot.
+_Avoid_: provider error report, evaluator transcript, separate case per uncertainty
 
 **Evaluation Evidence**:
-The versioned structured outputs used to decide a question proposal, including independent specialist verdicts, concise reason codes, bank-neighbor relation judgments, and the rule that produced the admission outcome. Evaluation Evidence preserves disagreement and excludes private chain-of-thought.
+The versioned structured record showing how a question proposal passed, failed, or remained uncertain at every required quality and semantic-repetition gate. It preserves deterministic findings, rubric results, selective escalation and relation evidence with concise reason codes, never private chain-of-thought.
+_Avoid_: consensus score, evaluator transcript
 
 **Admission Outcome**:
 The immutable recorded result of deciding one question proposal: Accept, Reject, or Human review. An automatic Human review outcome may be followed by a human Accept or Reject outcome that references the original evidence and review resolution. Human review is an abstention, not a trusted Question Bank state; missing or uncertain automatic evidence can never directly produce Accept.
@@ -139,7 +180,7 @@ An append-only factual record that an exact Question Revision was presented, ski
 _Avoid_: Game Statistic, quality score
 
 **Reference Examples**:
-The small human-reviewed set of good, bad, repetitive, and meaningfully different questions used to align Question Enrichment Pipeline evaluators. Reference Examples are calibration evidence, never proposal source material.
+The frozen twelve-case human-reviewed set of good, bad, repetitive, and meaningfully different questions used to regress one exact evaluator configuration. Reference Examples are calibration evidence, never proposal source material or whole-bank release revalidation.
 _Avoid_: training corpus, proposal examples
 
 **Aspect Repetition**:
@@ -346,7 +387,7 @@ Domain expert: "No. Preserve their independent Evaluation Evidence first. A late
 
 Developer: "What if an evaluator fails or its evidence is missing?"
 
-Domain expert: "The Admission Outcome cannot be Accept. Retry the failed stage once, then send the proposal to the Human Review Queue if the evidence is still incomplete."
+Domain expert: "The Admission Outcome cannot be Accept. Do not retry automatically or turn an operational failure into human review; preserve completed work and continue only in a separately authorized run."
 
 Developer: "Can we update the text of an active bank question in place?"
 
@@ -358,7 +399,7 @@ Domain expert: "No. A Taxonomy Candidate must explain independently created clas
 
 Developer: "Is a huge raw question count enough to call the Question Bank complete?"
 
-Domain expert: "No. Required Coverage Regions need distinct Semantic Scenarios, every Theme and Level horizon must be healthy, and independent discovery rounds must show genuine diminishing returns."
+Domain expert: "No. Bootstrap release requires at least 200 eligible questions, complete quality and semantic evidence, a full-bank repetition scan, metadata completeness and anti-collapse gates, the frozen regression, and the protected release spot check. Legacy Coverage Regions are not a completion gate."
 
 Developer: "If a bank release is bad, should we edit its questions in place?"
 

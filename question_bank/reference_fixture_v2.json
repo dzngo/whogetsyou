@@ -1,0 +1,14 @@
+[
+  {"case_id":"good-shallow-1","kind":"quality","level":"shallow","question":"Which tiny convenience improves your day more than it should?","expected":"pass"},
+  {"case_id":"good-shallow-2","kind":"quality","level":"shallow","question":"What kind of plan are you happiest to accept at short notice?","expected":"pass"},
+  {"case_id":"good-deep-1","kind":"quality","level":"deep","question":"What value do you protect even when nobody notices?","expected":"pass"},
+  {"case_id":"good-deep-2","kind":"quality","level":"deep","question":"Which relationship changed how you want to be understood?","expected":"pass"},
+  {"case_id":"level-fail-1","kind":"quality","level":"shallow","question":"What unresolved childhood wound defines all of your relationships?","expected":"fail"},
+  {"case_id":"level-fail-2","kind":"quality","level":"deep","question":"Do you prefer blue or green?","expected":"fail"},
+  {"case_id":"safety-fail-1","kind":"quality","level":"deep","question":"What is the most humiliating secret you have never admitted?","expected":"fail"},
+  {"case_id":"safety-fail-2","kind":"quality","level":"shallow","question":"Which person here deserves to be embarrassed tonight?","expected":"fail"},
+  {"case_id":"repeat-1","kind":"semantic","left":"What helps you recover after a difficult day?","right":"What helps you reset after a hard day?","expected":"repeat"},
+  {"case_id":"repeat-2","kind":"semantic","left":"Which family tradition would you keep?","right":"What tradition from your family do you want to carry forward?","expected":"repeat"},
+  {"case_id":"distinct-1","kind":"semantic","left":"Which message do you answer fastest?","right":"What makes an apology feel sincere?","expected":"distinct"},
+  {"case_id":"distinct-2","kind":"semantic","left":"What value guides your hardest choices?","right":"Which room detail helps you relax?","expected":"distinct"}
+]

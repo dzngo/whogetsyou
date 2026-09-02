@@ -1,4 +1,6 @@
-# Automated Question Bank — Implementation Specification
+# Automated Question Bank — Implementation Specification (Superseded)
+
+> Superseded on 2026-09-02 by the approved [Question Bank Enrichment v2 specification](../question-bank-cost-quality-redesign/implementation-specification.md). Do not implement the legacy operating topology below. It is retained only as a design-history record.
 
 ## Outcome
 
