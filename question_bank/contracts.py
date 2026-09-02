@@ -348,6 +348,7 @@ class RunRequest:
         snapshot_id: str,
         authorization_usd: Decimal = Decimal("0.20"),
         configuration_id: str = "",
+        batch_index: int = 0,
     ) -> RunRequest:
         return cls(
             idempotency_key=idempotency_key,
@@ -360,6 +361,7 @@ class RunRequest:
             uncertainty_review_limit=1,
             protected_spot_check_count=4,
             configuration_id=configuration_id,
+            batch_index=batch_index,
         )
 
     @classmethod

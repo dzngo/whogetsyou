@@ -10,6 +10,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from models import THEME_DESCRIPTIONS
 from question_bank.contracts import ConfigurationManifest, RunRequest, canonical_data
 from question_bank.engine import EnrichmentEngine
@@ -78,12 +80,21 @@ def build_parser() -> argparse.ArgumentParser:
     pilot.add_argument("--authorization-usd", default="0.20")
     pilot.add_argument("--idempotency-key", default="")
     pilot.add_argument("--confirm-paid", action="store_true")
+    pilot.add_argument("--allow-estimated-gemini-cap", action="store_true")
+    resume_pilot = sub.add_parser("resume-pilot")
+    resume_pilot.add_argument("prior_run_id")
+    resume_pilot.add_argument("--batch-index", type=int, default=1)
+    resume_pilot.add_argument("--authorization-usd", default="0.225")
+    resume_pilot.add_argument("--idempotency-key", default="")
+    resume_pilot.add_argument("--confirm-paid", action="store_true")
+    resume_pilot.add_argument("--allow-estimated-gemini-cap", action="store_true")
     production = sub.add_parser("run-production-batch")
     production.add_argument("--batch-index", type=int, required=True)
     production.add_argument("--prior-run-id")
     production.add_argument("--authorization-usd", default="2.00")
     production.add_argument("--idempotency-key", default="")
     production.add_argument("--confirm-paid", action="store_true")
+    production.add_argument("--allow-estimated-gemini-cap", action="store_true")
     report = sub.add_parser("report")
     report.add_argument("run_id")
     review = sub.add_parser("review-resolve")
@@ -120,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv()
     args = build_parser().parse_args(argv)
     root: Path = args.root
     config = _configuration()
@@ -136,20 +148,32 @@ def main(argv: list[str] | None = None) -> int:
             acknowledge_difference=args.acknowledge_difference,
         ))
         return 0
-    if args.command in {"run-pilot", "run-production-batch"}:
+    if args.command in {"run-pilot", "resume-pilot", "run-production-batch"}:
         if not args.confirm_paid:
             raise SystemExit(f"{args.command} requires --confirm-paid and a separate explicit authorization")
-        provider = ProviderRouter(openai=NativeOpenAIAdapter(), gemini=NativeGeminiAdapter())
+        if not args.allow_estimated_gemini_cap:
+            raise SystemExit(
+                f"{args.command} requires --allow-estimated-gemini-cap because Gemini high thinking has no documented reasoning-inclusive hard cap"
+            )
+        provider = ProviderRouter(
+            openai=NativeOpenAIAdapter(),
+            gemini=NativeGeminiAdapter(allow_estimated_total_generated_cap=True),
+        )
         embedder = FastEmbedAdapter(checksum=config.embedding_checksum)
         engine = EnrichmentEngine(root, provider=provider, configuration=config, embedder=embedder)
-        if args.command == "run-pilot":
+        if args.command in {"run-pilot", "resume-pilot"}:
             request = RunRequest.pilot(
-                idempotency_key=args.idempotency_key or f"pilot-{uuid.uuid4().hex}",
+                idempotency_key=args.idempotency_key or f"{args.command}-{uuid.uuid4().hex}",
                 snapshot_id=engine.empty_snapshot_id,
                 authorization_usd=args.authorization_usd,
                 configuration_id=config.manifest_id,
+                batch_index=getattr(args, "batch_index", 0),
             )
-            result = engine.run(request)
+            result = (
+                engine.resume(args.prior_run_id, request)
+                if args.command == "resume-pilot"
+                else engine.run(request)
+            )
         else:
             request = RunRequest.production_batch(
                 idempotency_key=args.idempotency_key or f"production-{args.batch_index}-{uuid.uuid4().hex}",

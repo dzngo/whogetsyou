@@ -75,6 +75,48 @@ class NativeProviderContractTests(unittest.TestCase):
             adapter.invoke(invocation)
         self.assertEqual([], calls)
 
+    def test_explicit_gemini_estimate_exception_sends_one_bounded_high_thinking_call(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=(), aspects=(), perspectives=()
+        )
+        role = config.creative_roles[0]
+        calls = []
+
+        def generate_content(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                text=json.dumps({"questions": [f"Question {index}?" for index in range(5)]}),
+                model_version=role.model,
+                response_id="gemini-estimated-one",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=100,
+                    cached_content_token_count=None,
+                    candidates_token_count=50,
+                    thoughts_token_count=100,
+                    total_token_count=250,
+                ),
+            )
+
+        adapter = NativeGeminiAdapter(
+            client=SimpleNamespace(
+                models=SimpleNamespace(generate_content=generate_content)
+            ),
+            allow_estimated_total_generated_cap=True,
+        )
+        invocation = ReservedInvocation("run", "inv", "key", role, {}, "reservation")
+
+        result = adapter.invoke(invocation)
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual(
+            role.total_generated_token_limit,
+            calls[0]["config"]["max_output_tokens"],
+        )
+        self.assertEqual(
+            "HIGH", calls[0]["config"]["thinking_config"]["thinking_level"]
+        )
+        self.assertEqual(100, result.usage.reasoning_or_thought_tokens)
+
 
 if __name__ == "__main__":
     unittest.main()

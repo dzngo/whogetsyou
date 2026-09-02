@@ -261,6 +261,9 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
             self.assertEqual(19, sum(len(call.payload["candidates"]) for call in quality_calls))
             self.assertEqual("pair_overflow", report.stop_reason)
             self.assertNotIn("semantic_high", [call.role.role for call in provider.calls])
+            self.assertFalse(
+                any(item.state == CandidateState.PROPOSED for item in report.candidates)
+            )
 
 
 class EnrichmentEngineQualityTests(unittest.TestCase):

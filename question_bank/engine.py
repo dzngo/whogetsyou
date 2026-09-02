@@ -261,10 +261,11 @@ class EnrichmentEngine:
             self._store.store_report(report)
             return report
         if len(semantic_pairs) > 12:
-            affected = {pair["candidate_id"] for pair in semantic_pairs}
-            for candidate_id in affected:
+            for candidate in passing:
+                if semantic_pass.get(candidate.candidate_id) == "reject":
+                    continue
                 self._store.set_candidate_outcome(
-                    candidate_id,
+                    candidate.candidate_id,
                     CandidateState.OPERATIONALLY_UNRESOLVED,
                     ("pair_overflow",),
                 )

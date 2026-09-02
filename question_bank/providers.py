@@ -91,6 +91,10 @@ def _object(value, name: str, default=None):
     return getattr(value, name, default)
 
 
+def _integer(value) -> int:
+    return int(value or 0)
+
+
 def _provider_failure(error: Exception) -> ProviderFailure:
     status = getattr(error, "status_code", None) or getattr(error, "code", None)
     definitive = isinstance(status, int) and 400 <= status < 500 and status != 408
@@ -240,11 +244,11 @@ class NativeOpenAIAdapter:
         return ProviderResult(
             output=output,
             usage=__import__("question_bank.contracts", fromlist=["ProviderUsage"]).ProviderUsage(
-                int(_object(usage, "input_tokens", 0)),
-                int(_object(input_details, "cached_tokens", 0)),
-                int(_object(usage, "output_tokens", 0)),
-                int(_object(output_details, "reasoning_tokens", 0)),
-                int(_object(usage, "total_tokens", 0)),
+                _integer(_object(usage, "input_tokens", 0)),
+                _integer(_object(input_details, "cached_tokens", 0)),
+                _integer(_object(usage, "output_tokens", 0)),
+                _integer(_object(output_details, "reasoning_tokens", 0)),
+                _integer(_object(usage, "total_tokens", 0)),
             ),
             reported_model=str(_object(response, "model", "")),
             response_id=str(_object(response, "id", "")),
@@ -254,7 +258,9 @@ class NativeOpenAIAdapter:
 class NativeGeminiAdapter:
     """Native Gemini adapter; hard-budget runs fail closed without a total cap."""
 
-    def __init__(self, client=None) -> None:
+    def __init__(
+        self, client=None, *, allow_estimated_total_generated_cap: bool = False
+    ) -> None:
         if client is None:
             try:
                 from google import genai
@@ -262,10 +268,14 @@ class NativeGeminiAdapter:
                 raise RuntimeError("install google-genai to use the native adapter") from error
             client = genai.Client()
         self._client = client
+        self._allow_estimated_total_generated_cap = allow_estimated_total_generated_cap
 
     def invoke(self, invocation: ReservedInvocation) -> ProviderResult:
         role = invocation.role
-        if role.total_generated_token_limit is not None:
+        if (
+            role.total_generated_token_limit is not None
+            and not self._allow_estimated_total_generated_cap
+        ):
             raise ProviderFailure("hard_generated_token_cap_unavailable", ambiguous=False)
         try:
             response = self._client.models.generate_content(
@@ -277,7 +287,9 @@ class NativeGeminiAdapter:
                         "Do not include reasoning."
                     ),
                     "thinking_config": {"thinking_level": role.reasoning.upper()},
-                    "max_output_tokens": role.output_token_limit,
+                    "max_output_tokens": (
+                        role.total_generated_token_limit or role.output_token_limit
+                    ),
                     "response_mime_type": "application/json",
                     "response_json_schema": _json_schema(role.role),
                 },
@@ -296,11 +308,11 @@ class NativeGeminiAdapter:
         return ProviderResult(
             output=output,
             usage=ProviderUsage(
-                int(_object(usage, "prompt_token_count", 0)),
-                int(_object(usage, "cached_content_token_count", 0)),
-                int(_object(usage, "candidates_token_count", 0)),
-                int(_object(usage, "thoughts_token_count", 0)),
-                int(_object(usage, "total_token_count", 0)),
+                _integer(_object(usage, "prompt_token_count", 0)),
+                _integer(_object(usage, "cached_content_token_count", 0)),
+                _integer(_object(usage, "candidates_token_count", 0)),
+                _integer(_object(usage, "thoughts_token_count", 0)),
+                _integer(_object(usage, "total_token_count", 0)),
             ),
             reported_model=str(_object(response, "model_version", "")),
             response_id=str(_object(response, "response_id", "")),
