@@ -11,6 +11,7 @@ from question_bank import (
     EnrichmentEngine,
     HashingTestEmbedder,
     HumanReview,
+    ProviderFailure,
     ProviderResult,
     ProviderUsage,
     RunRequest,
@@ -137,7 +138,7 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
             self.assertEqual(10, sum(candidate.level.value == "deep" for candidate in report.candidates))
             creative_calls = provider.calls[:4]
             self.assertEqual(tuple(role.role for role in configuration.creative_roles), tuple(call.role.role for call in creative_calls))
-            self.assertTrue(all("theme" not in str(call.payload).lower() for call in creative_calls))
+            self.assertTrue(all("named_themes" not in call.payload for call in creative_calls))
             self.assertTrue(all(len(call.payload["output_schema"]["questions"]) == 5 for call in creative_calls))
             self.assertEqual(5, len(provider.calls))
             self.assertEqual(report, repeated)
@@ -196,10 +197,9 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
         responses = {}
         duplicate = "What small ritual helps you reset?"
         for role_index, role in enumerate(configuration.creative_roles):
-            questions = [
-                f"What distinct situation {role_index}-{index} reveals you?"
-                for index in range(5)
-            ]
+            questions = list(
+                DIVERSE_QUESTIONS[role_index * 5 : role_index * 5 + 5]
+            )
             if role_index == 0:
                 questions[0] = duplicate
             if role_index == 3:
@@ -235,6 +235,36 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
             )
 
         responses["quality_medium"] = [all_quality_pass, all_quality_pass]
+
+        def all_semantically_distinct(invocation):
+            return ProviderResult(
+                {
+                    "pairs": [
+                        {
+                            "pair_id": pair["pair_id"],
+                            "scenario": "different",
+                            "perspective": "different",
+                            "answer_space": "different",
+                            "aspect": "different",
+                            "wording": "different",
+                            "verdict": "distinct",
+                            "reason_codes": ["distinct"],
+                        }
+                        for pair in invocation.payload["pairs"]
+                    ]
+                },
+                ProviderUsage(2500, 0, 600, 300, 3400),
+                "gpt-5.4-mini",
+                f"semantic-{invocation.invocation_id}",
+            )
+
+        responses["semantic_high"] = [
+            all_semantically_distinct,
+            all_semantically_distinct,
+        ]
+        responses["metadata_medium"] = [
+            ProviderFailure("metadata-stop", ambiguous=False)
+        ]
         with tempfile.TemporaryDirectory() as directory:
             provider = ScriptedProvider(responses)
             engine = EnrichmentEngine(
@@ -259,8 +289,12 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
             self.assertEqual(1, len(duplicates))
             quality_calls = [call for call in provider.calls if call.role.role == "quality_medium"]
             self.assertEqual(19, sum(len(call.payload["candidates"]) for call in quality_calls))
-            self.assertEqual("pair_overflow", report.stop_reason)
-            self.assertNotIn("semantic_high", [call.role.role for call in provider.calls])
+            self.assertEqual("metadata_failed", report.stop_reason)
+            semantic_calls = [
+                call for call in provider.calls if call.role.role == "semantic_high"
+            ]
+            self.assertLessEqual(len(semantic_calls), 4)
+            self.assertTrue(semantic_calls)
             self.assertFalse(
                 any(item.state == CandidateState.PROPOSED for item in report.candidates)
             )
@@ -275,7 +309,11 @@ class EnrichmentEngineQualityTests(unittest.TestCase):
         for role_index, role in enumerate(configuration.creative_roles):
             responses[role.role] = [
                 ProviderResult(
-                    {"questions": DIVERSE_QUESTIONS[role_index * 5 : role_index * 5 + 5]},
+                    {
+                        "questions": list(
+                            DIVERSE_QUESTIONS[role_index * 5 : role_index * 5 + 5]
+                        )
+                    },
                     ProviderUsage(600, 0, 60, 60, 720),
                     role.model,
                     f"malformed-quality-creative-{role_index}",
@@ -405,10 +443,10 @@ class EnrichmentEngineQualityTests(unittest.TestCase):
                 )
             )
 
-            self.assertEqual("provider_failure", report.stop_reason)
+            self.assertEqual("metadata_failed", report.stop_reason)
             self.assertEqual(4, sum(candidate.state == CandidateState.REJECTED for candidate in report.candidates))
             self.assertEqual(
-                16,
+                4,
                 sum(
                     candidate.state == CandidateState.OPERATIONALLY_UNRESOLVED
                     for candidate in report.candidates
@@ -417,7 +455,7 @@ class EnrichmentEngineQualityTests(unittest.TestCase):
             roles = [call.role.role for call in provider.calls]
             self.assertEqual(2, roles.count("quality_medium"))
             self.assertNotIn("quality_high", roles)
-            self.assertEqual("semantic_high", roles[-1])
+            self.assertEqual("metadata_medium", roles[-1])
 
     def test_only_uncertain_quality_enters_one_high_reasoning_batch(self) -> None:
         configuration = ConfigurationManifest.approved_defaults(
@@ -442,16 +480,28 @@ class EnrichmentEngineQualityTests(unittest.TestCase):
             nonlocal medium_call
             records = []
             for index, candidate in enumerate(invocation.payload["candidates"]):
-                value = "uncertain" if medium_call == 0 and index == 0 else "pass"
+                abstains_on_deep = (
+                    medium_call == 0
+                    and index == 2
+                    and candidate["level"] == "deep"
+                )
                 records.append(
                     {
                         "candidate_id": candidate["candidate_id"],
-                        "clarity": value,
+                        "clarity": "pass",
                         "answerability": "pass",
                         "emotional_safety": "pass",
                         "level_fit": "pass",
-                        "deep_revelation": "not_applicable" if candidate["level"] == "shallow" else "pass",
-                        "reason_codes": ["needs_second_read"] if value == "uncertain" else ["passes"],
+                        "deep_revelation": (
+                            "not_applicable"
+                            if candidate["level"] == "shallow" or abstains_on_deep
+                            else "pass"
+                        ),
+                        "reason_codes": (
+                            ["deep_revelation_not_judged"]
+                            if abstains_on_deep
+                            else ["passes"]
+                        ),
                     }
                 )
             medium_call += 1
@@ -505,11 +555,249 @@ class EnrichmentEngineQualityTests(unittest.TestCase):
 
             roles = [call.role.role for call in provider.calls]
             self.assertEqual(1, roles.count("quality_high"))
-            self.assertEqual("semantic_high", roles[-1])
-            self.assertEqual(20, sum(candidate.state == CandidateState.OPERATIONALLY_UNRESOLVED for candidate in report.candidates))
+            self.assertEqual("metadata_medium", roles[-1])
+            self.assertEqual(5, sum(candidate.state == CandidateState.OPERATIONALLY_UNRESOLVED for candidate in report.candidates))
 
 
 class EnrichmentEngineSemanticTests(unittest.TestCase):
+    def test_saved_nondefinitive_candidate_can_be_reprocessed_without_creative_calls(self) -> None:
+        configuration = ConfigurationManifest.approved_defaults(
+            named_themes=("Work",),
+            aspects=("identity",),
+            perspectives=("preference",),
+            local_distance_authority=True,
+        )
+        responses = {}
+        for role_index, role in enumerate(configuration.creative_roles):
+            responses[role.role] = [
+                ProviderResult(
+                    {
+                        "questions": list(
+                            DIVERSE_QUESTIONS[role_index * 5 : role_index * 5 + 5]
+                        )
+                    },
+                    ProviderUsage(500, 0, 50, 50, 600),
+                    role.model,
+                    f"creative-reprocess-source-{role_index}",
+                )
+            ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = ScriptedProvider(responses)
+            engine = EnrichmentEngine(
+                Path(directory),
+                provider=provider,
+                configuration=configuration,
+                embedder=OneAmbiguousEmbedder(),
+            )
+            source_report = engine.run(
+                RunRequest.production_batch(
+                    idempotency_key="reprocess-source",
+                    snapshot_id=engine.empty_snapshot_id,
+                    batch_index=0,
+                    authorization_usd=Decimal("1.00"),
+                )
+            )
+            source = source_report.candidates[0]
+            self.assertEqual(CandidateState.OPERATIONALLY_UNRESOLVED, source.state)
+            calls_before_reprocessing = len(provider.calls)
+
+            def quality_pass(invocation):
+                candidate = invocation.payload["candidates"][0]
+                return ProviderResult(
+                    {
+                        "records": [
+                            {
+                                "candidate_id": candidate["candidate_id"],
+                                "clarity": "pass",
+                                "answerability": "pass",
+                                "emotional_safety": "pass",
+                                "level_fit": "pass",
+                                "deep_revelation": "not_applicable",
+                                "reason_codes": ["passes"],
+                            }
+                        ]
+                    },
+                    ProviderUsage(500, 0, 100, 20, 620),
+                    "gpt-5.4-mini",
+                    "quality-reprocessed",
+                )
+
+            def metadata_pass(invocation):
+                question = invocation.payload["questions"][0]
+                return ProviderResult(
+                    {
+                        "records": [
+                            {
+                                "candidate_id": question["candidate_id"],
+                                "themes": [],
+                                "themes_resolved": True,
+                                "aspect": "identity",
+                                "perspective": "preference",
+                                "scenario": "morning preference",
+                                "answer_space": "breakfast details",
+                                "wording": "direct preference",
+                                "uncertain_fields": [],
+                            }
+                        ]
+                    },
+                    ProviderUsage(500, 0, 100, 20, 620),
+                    "gpt-5.4-mini",
+                    "metadata-reprocessed",
+                )
+
+            provider.append("quality_medium", quality_pass)
+            provider.append("metadata_medium", metadata_pass)
+            recovered = engine.reprocess_candidates(
+                RunRequest.production_batch(
+                    idempotency_key="reprocess-target",
+                    snapshot_id=engine.empty_snapshot_id,
+                    batch_index=1,
+                    authorization_usd=Decimal("1.00"),
+                ),
+                (source.candidate_id,),
+            )
+
+            reprocessing_roles = [
+                call.role.role for call in provider.calls[calls_before_reprocessing:]
+            ]
+            self.assertEqual(["quality_medium", "observed_diversity", "metadata_medium"], reprocessing_roles)
+            self.assertEqual(1, len(recovered.candidates))
+            self.assertEqual(source.text, recovered.candidates[0].text)
+            self.assertEqual(CandidateState.STAGED, recovered.candidates[0].state)
+
+    def test_semantic_payload_defines_dimensions_and_consistency_rule(self) -> None:
+        payload = EnrichmentEngine._semantic_payload(
+            [
+                {
+                    "pair_id": "pair-one",
+                    "candidate_id": "candidate-one",
+                    "candidate_text": "What helps you recover after a difficult day?",
+                    "neighbor_id": "question-one",
+                    "neighbor_text": "What restores you after a hard day?",
+                }
+            ]
+        )
+
+        self.assertIn("semantic_scenario", payload["definitions"])
+        self.assertIn("question_perspective", payload["definitions"])
+        self.assertIn("answer_space", payload["definitions"])
+        self.assertEqual(
+            "repeat_if_scenario_perspective_and_answer_space_are_all_same_or_overlapping",
+            payload["decision_rule"],
+        )
+        self.assertIn("must agree", payload["consistency_rule"])
+
+    def test_semantic_provider_failure_preserves_unaffected_local_passes(self) -> None:
+        configuration = ConfigurationManifest.approved_defaults(
+            named_themes=("Work",),
+            aspects=("identity",),
+            perspectives=("preference",),
+            local_distance_authority=True,
+        )
+        responses = {}
+        for role_index, role in enumerate(configuration.creative_roles):
+            responses[role.role] = [
+                ProviderResult(
+                    {
+                        "questions": list(
+                            DIVERSE_QUESTIONS[role_index * 5 : role_index * 5 + 5]
+                        )
+                    },
+                    ProviderUsage(500, 0, 50, 50, 600),
+                    role.model,
+                    f"creative-contained-failure-{role_index}",
+                )
+            ]
+
+        def quality_pass(invocation):
+            return ProviderResult(
+                {
+                    "records": [
+                        {
+                            "candidate_id": candidate["candidate_id"],
+                            "clarity": "pass",
+                            "answerability": "pass",
+                            "emotional_safety": "pass",
+                            "level_fit": "pass",
+                            "deep_revelation": (
+                                "not_applicable"
+                                if candidate["level"] == "shallow"
+                                else "pass"
+                            ),
+                            "reason_codes": ["passes"],
+                        }
+                        for candidate in invocation.payload["candidates"]
+                    ]
+                },
+                ProviderUsage(1000, 0, 300, 50, 1350),
+                "gpt-5.4-mini",
+                f"quality-contained-failure-{invocation.invocation_id}",
+            )
+
+        def metadata_pass(invocation):
+            return ProviderResult(
+                {
+                    "records": [
+                        {
+                            "candidate_id": question["candidate_id"],
+                            "themes": [],
+                            "themes_resolved": True,
+                            "aspect": "identity",
+                            "perspective": "preference",
+                            "scenario": "distinct scenario",
+                            "answer_space": "distinct answer",
+                            "wording": "direct question",
+                            "uncertain_fields": [],
+                        }
+                        for question in invocation.payload["questions"]
+                    ]
+                },
+                ProviderUsage(1000, 0, 300, 50, 1350),
+                "gpt-5.4-mini",
+                "metadata-contained-failure",
+            )
+
+        responses["quality_medium"] = [quality_pass, quality_pass]
+        responses["semantic_high"] = [
+            ProviderFailure("provider_output_incomplete_max_output_tokens", ambiguous=True)
+        ]
+        responses["metadata_medium"] = [metadata_pass]
+
+        with tempfile.TemporaryDirectory() as directory:
+            provider = ScriptedProvider(responses)
+            engine = EnrichmentEngine(
+                Path(directory),
+                provider=provider,
+                configuration=configuration,
+                embedder=OneAmbiguousEmbedder(),
+            )
+            report = engine.run(
+                RunRequest.production_batch(
+                    idempotency_key="semantic-contained-failure",
+                    snapshot_id=engine.empty_snapshot_id,
+                    batch_index=0,
+                    authorization_usd=Decimal("1.00"),
+                )
+            )
+
+            self.assertEqual(
+                "unknown_spend",
+                report.stop_reason,
+                ([call.role.role for call in provider.calls], report.candidates),
+            )
+            self.assertEqual(
+                15,
+                sum(item.state == CandidateState.STAGED for item in report.candidates),
+            )
+            self.assertEqual(
+                5,
+                sum(
+                    item.state == CandidateState.OPERATIONALLY_UNRESOLVED
+                    for item in report.candidates
+                ),
+            )
+
     def test_one_ambiguous_repeat_is_rejected_and_metadata_failure_keeps_other_questions_staged(self) -> None:
         class ControlledEmbedder:
             model_id = "controlled"
@@ -589,7 +877,7 @@ class EnrichmentEngineSemanticTests(unittest.TestCase):
             )
 
         def semantic_repeat(invocation):
-            self.assertLessEqual(len(invocation.payload["pairs"]), 12)
+            self.assertLessEqual(len(invocation.payload["pairs"]), 6)
             records = []
             repeat_count = 0
             for pair in invocation.payload["pairs"]:
@@ -645,7 +933,7 @@ class EnrichmentEngineSemanticTests(unittest.TestCase):
 
 
 class EnrichmentEngineMetadataTests(unittest.TestCase):
-    def test_metadata_enrichment_keeps_admission_and_opens_four_protected_spot_checks(self) -> None:
+    def test_metadata_enrichment_normalizes_tentative_values_and_keeps_admission(self) -> None:
         class UniqueEmbedder:
             model_id = "unique"
             dimensions = 24
@@ -746,7 +1034,7 @@ class EnrichmentEngineMetadataTests(unittest.TestCase):
             return ProviderResult(
                 {
                     "records": [
-                        {
+                        ({
                             "candidate_id": question["candidate_id"],
                             "themes": [],
                             "themes_resolved": True,
@@ -756,7 +1044,17 @@ class EnrichmentEngineMetadataTests(unittest.TestCase):
                             "answer_space": f"answer-{index}",
                             "wording": f"wording-{index}",
                             "uncertain_fields": [],
-                        }
+                        } if index else {
+                            "candidate_id": question["candidate_id"],
+                            "themes": [],
+                            "themes_resolved": True,
+                            "aspect": "identity",
+                            "perspective": "preference",
+                            "scenario": f"scenario-{index}",
+                            "answer_space": f"answer-{index}",
+                            "wording": f"wording-{index}",
+                            "uncertain_fields": ["aspect"],
+                        })
                         for index, question in enumerate(invocation.payload["questions"])
                     ]
                 },
@@ -787,8 +1085,14 @@ class EnrichmentEngineMetadataTests(unittest.TestCase):
             self.assertEqual("awaiting_human_review", report.status)
             self.assertEqual(20, sum(candidate.state == CandidateState.STAGED for candidate in report.candidates))
             self.assertTrue(all(candidate.theme_memberships == () for candidate in report.candidates))
-            self.assertTrue(all(candidate.metadata["aspect"] == "identity" for candidate in report.candidates))
-            self.assertEqual(4, len(report.review_case_ids))
+            self.assertEqual(None, report.candidates[0].metadata["aspect"])
+            self.assertTrue(
+                all(
+                    candidate.metadata["aspect"] == "identity"
+                    for candidate in report.candidates[1:]
+                )
+            )
+            self.assertEqual(5, len(report.review_case_ids))
             review = HumanReview(Path(directory))
             for index, case_id in enumerate(report.review_case_ids):
                 review.resolve(

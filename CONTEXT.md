@@ -367,7 +367,7 @@ Domain expert: "Put it in the Human Review Queue with the agents' judgments, dis
 
 Developer: "Should four creative agents each write a question immediately?"
 
-Domain expert: "No. They independently propose Creative Concepts first, remove semantic overlap, and only then compose one question per surviving concept."
+Domain expert: "Yes. Each isolated Gemini creative agent returns five finished question texts for its assigned Creative Strategy. It does not create concepts, assign Themes, inspect sibling output, or decide admission; deterministic preflight and semantic Modules handle overlap afterward."
 
 Developer: "If an agent rewrites an externally sourced question, can the new wording drop the source record?"
 
@@ -383,7 +383,7 @@ Domain expert: "No. Confirm a small set of Reference Examples once, send only un
 
 Developer: "Should the evaluation agents discuss a proposal until they agree?"
 
-Domain expert: "No. Preserve their independent Evaluation Evidence first. A later challenge may flag conflicts, but uncertainty goes to the Human Review Queue instead of being hidden by consensus."
+Domain expert: "No. The routine GPT quality agent returns structured Evaluation Evidence. Only uncertain records receive one high-reasoning escalation; remaining uncertainty goes to the Human Review Queue instead of being hidden by consensus."
 
 Developer: "What if an evaluator fails or its evidence is missing?"
 
@@ -411,7 +411,19 @@ Domain expert: "No. A Question Usage Event is stored for possible future study, 
 
 Developer: "Is the Question Enrichment Pipeline actually a multi-agent LLM system?"
 
-Domain expert: "Yes. Independent LLM Agents create, compose, classify, judge, and challenge questions. Deterministic Modules orchestrate those agents and alone control admission, identity, lifecycle, and release."
+Domain expert: "Yes. Four isolated Gemini LLM Agents propose questions, while separate GPT LLM Agents evaluate quality, resolve ambiguous semantic relations, and assign metadata. Deterministic Modules orchestrate them and alone control budgets, admission, identity, lifecycle, and release."
+
+Developer: "Did semantic-routing-v5 replace the multi-agent architecture?"
+
+Domain expert: "No. It makes local evidence authoritative for clearly different pairs, then sends each candidate's strongest ambiguous neighbour and any strong lexical alerts to the semantic GPT Agent. Creative, quality, semantic-escalation, and metadata roles remain separate."
+
+Developer: "If one semantic GPT batch is truncated, should every quality-passing question in the production batch be discarded?"
+
+Domain expert: "No. Preserve local passes and complete relation evidence. Only candidates whose admission depends on the failed or unsent semantic chunk become operationally unresolved, and they remain available for explicit reprocessing without another creative call."
+
+Developer: "How does the semantic GPT Agent avoid saying a pair is distinct while labeling Scenario, Perspective, and Answer Space as overlapping?"
+
+Domain expert: "Semantic-routing-v5 sends explicit dimension definitions and the deterministic repeat rule, and bounds high-reasoning work to six pairs per call. The verdict must agree with the three primary labels; genuine uncertainty abstains instead of producing contradictory evidence."
 
 Developer: "Can a Shallow Work question be about anything light?"
 

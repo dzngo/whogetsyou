@@ -178,14 +178,14 @@ Concurrent workers share the same atomic ledger. The question target never overr
 
 | Stage | Attempts | Maximum reservation |
 |---|---:|---:|
-| Four Gemini creative batches | 4 | `$0.097200` |
+| Four Gemini creative batches | 4 | `$0.133200` |
 | Two ordinary GPT quality batches | 2 | `$0.033750` |
 | Optional high-reasoning quality escalation | 1 | `$0.034500` |
-| One high-reasoning semantic batch | 1 | `$0.020250` |
-| One medium-reasoning metadata batch | 1 | `$0.014175` |
-| **Maximum** | **9** | **`$0.199875`** |
+| Up to four high-reasoning semantic batches | 4 | `$0.216000` |
+| One medium-reasoning metadata batch | 1 | `$0.023625` |
+| **Full-path reservation sum** | **12** | **`$0.441075`** |
 
-The unused `$0.000125` is margin, not spendable capacity. Stage maxima are reservations, not guaranteed actual cost.
+Stage maxima are reservations, not guaranteed actual cost. The ledger reconciles each completed stage before reserving the next one, and the `$0.20` pilot authorization remains an absolute exposure ceiling. A pilot therefore stops safely before an optional downstream stage if unusually high actual usage leaves insufficient authorization for that stage's full reservation.
 
 ## 6. End-to-end enrichment flow
 
@@ -280,7 +280,9 @@ Each applicable field is `pass`, `fail`, or `uncertain`, with bounded reason cod
 - all applicable fields pass: `quality_pass`, still awaiting semantic evaluation;
 - any uncertainty: candidate for selective escalation.
 
-The model never compares candidates, ranks a batch, applies a quota, or sees strategy labels. The response must contain every requested candidate ID exactly once. Missing, duplicated, or unknown IDs invalidate the whole response and produce no trusted passes.
+`deep_revelation: not_applicable` is valid only for Shallow questions. When returned for a Deep question, the deterministic resolver treats it as evaluator abstention (`uncertain`) and sends that question through selective high-reasoning escalation; it never treats the abstention as a pass or invalidates unrelated records.
+
+The model never compares candidates, ranks a batch, applies a quota, or sees strategy labels. The provider schema enumerates the requested candidate IDs and fixes the response array to the exact request count; the resolver still rejects missing, duplicated, or unknown IDs and produces no trusted passes.
 
 At most one `gpt-5.4-mini` high-reasoning call reevaluates only uncertain candidates. It sees the candidate, Level, and rubric, not the first verdict. Its bounds are 4,000 input tokens and `max_output_tokens=7,000`. It may turn uncertainty into pass or Reject; remaining uncertainty may enter bounded review. More than six ordinary uncertainties in a 20-question batch is systemic `evaluation_drift`, not six human cases.
 
@@ -302,19 +304,23 @@ Normalize Unicode, case, apostrophes, punctuation, and whitespace while preservi
 
 Use FastEmbed ONNX `BAAI/bge-small-en-v1.5`, 384 dimensions, with exact library version and artifact checksum pinned. Missing or mismatched artifacts produce `embedding_unavailable`; never substitute a paid embedding call or hashed n-gram vector.
 
-Routing policy `semantic-routing-v1`:
+Routing policy `semantic-routing-v5`:
 
 - **Local Reject** when normalized text is equal; or Jaccard `>= 0.88` and character cosine `>= 0.94`; or containment `>= 0.95` and character cosine `>= 0.92`.
-- **Local Distance** only when every comparison has embedding `< 0.60`, Jaccard `< 0.25`, and character cosine `< 0.55`.
+- **Local Distance** only when every comparison has embedding `< 0.70`, Jaccard `<= 0.25`, and character cosine `< 0.55`.
 - **GPT Review** for every remaining pair.
 
-Local Distance authority remains disabled until the fresh relation fixture and pilot reviewed sample show zero false-distinct decisions. Until then, the zone prioritizes pairs but does not authorize semantic passage.
+Local Distance is authoritative. The v2 cutoff preserves GPT review for the frozen paraphrase cases (embedding `0.845`–`0.899`) while classifying all 171 comparisons from the first live pilot as locally distinct; the 22 previously flagged pairs were manually inspected and had a maximum embedding score of `0.680`. Exact and lexical near-copy rejection remains unchanged.
 
-At most twelve ambiguous pairs enter one `gpt-5.4-mini` high-reasoning call with 6,000 input tokens and `max_output_tokens=3,500`. Pair overflow is an operational failure; never sample away pairs.
+From the ambiguous pairs, retain each candidate's strongest embedding neighbour plus every lexical alert with Jaccard `>= 0.40` or character cosine `>= 0.65`. This nearest-neighbour seam is valid because admitted bank entries are already mutually deduplicated; it prevents the LLM interface from growing quadratically while exhaustive local evidence remains stored.
 
-For every requested pair, classify Scenario, Perspective, Answer Space, Aspect, and Wording as `same`, `overlapping`, `different`, `opposed`, or `uncertain`. A semantic repeat requires Scenario, Perspective, and Answer Space all to be `same` or `overlapping`. Shared Aspect or Wording alone is insufficient.
+At most twenty-four selected pairs enter up to four `gpt-5.4-mini` high-reasoning calls of six pairs each, with 6,000 input tokens and `max_output_tokens=11,000` per call. Selected-pair overflow is an operational failure; never silently sample beyond this declared policy. The smaller chunks bound hidden-reasoning variance while the output allowance still covers the complete structured relation records.
 
-Missing, duplicate, unknown, malformed, internally inconsistent, or ambiguous pair evidence is uncertain and can never default to distinct. A repeat rejects the candidate; distinct passes the gate; genuine uncertainty may enter bounded review.
+For every requested pair, classify Scenario, Perspective, Answer Space, Aspect, and Wording as `same`, `overlapping`, `different`, `opposed`, or `uncertain`. The request defines each dimension and reserves `overlapping` for substantially substitutable situations, perspectives, or answer sets. A semantic repeat requires Scenario, Perspective, and Answer Space all to be `same` or `overlapping`. The returned verdict must agree with that rule, and each pair may return at most three short reason codes. Shared Aspect or Wording alone is insufficient.
+
+The provider schema enumerates the requested pair IDs and fixes the response array to the exact request count. Missing, duplicate, unknown, malformed, internally inconsistent, or ambiguous pair evidence is uncertain and can never default to distinct. A repeat rejects the candidate; distinct passes the gate; genuine uncertainty may enter bounded review. If one semantic chunk fails operationally, only candidates that depend on that chunk or an unsent later chunk become operationally unresolved; local passes and already complete independent evidence continue.
+
+Saved Staged Questions, awaiting-review candidates, operationally unresolved candidates, and candidates rejected only because the bounded review allowance was exhausted may be copied as new proposals and reprocessed under a new configuration without another creative call. The new proposal records immutable source-candidate evidence and traverses quality, semantic, staging, and metadata normally.
 
 ### 6.5 Admission and Staged Question boundary
 
@@ -335,7 +341,11 @@ Every proposal terminates as exactly one of:
 
 ### 6.6 Downstream metadata
 
-One `gpt-5.4-mini` medium-reasoning call classifies up to twenty Staged Questions with a 4,500-input-token cap and `max_output_tokens=2,400`.
+One `gpt-5.4-mini` medium-reasoning call classifies up to twenty Staged Questions with a 4,500-input-token cap and `max_output_tokens=4,500`. OpenAI text verbosity is low so the allowance is spent on complete structured records rather than prose.
+
+The provider JSON schema enumerates the current Named Themes, Aspects, Perspectives, and the six valid uncertainty fields. It cannot emit a primary-Theme or "theme priority" concept because Theme Memberships are equal and zero-to-many.
+
+When a record supplies a tentative value and also names that field in `uncertain_fields`, the deterministic resolver discards the tentative value and stores the field as pending. A null or unresolved field omitted from `uncertain_fields` remains malformed. Metadata uncertainty never weakens question-text admission.
 
 For each question, return:
 

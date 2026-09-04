@@ -22,6 +22,19 @@ from question_bank.store import V2Store
 
 
 class BudgetAndCacheTests(unittest.TestCase):
+    def test_large_campaign_scales_attempt_and_uncertainty_limits_explicitly(self) -> None:
+        request = RunRequest.production_batch(
+            idempotency_key="large-campaign",
+            snapshot_id="snapshot",
+            batch_index=0,
+            authorization_usd=Decimal("6.80"),
+            attempt_limit=500,
+            uncertainty_review_limit=30,
+        )
+
+        self.assertEqual(500, request.attempt_limit)
+        self.assertEqual(30, request.uncertainty_review_limit)
+
     def test_production_campaign_shares_attempt_and_exposure_limits_across_batches(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

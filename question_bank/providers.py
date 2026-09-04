@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from typing import Protocol
 
 from question_bank.contracts import ProviderResult, ReservedInvocation
+from question_bank.missions import mission_schema
 
 
 class ProviderFailure(RuntimeError):
@@ -97,6 +98,10 @@ def _integer(value) -> int:
 
 def _provider_failure(error: Exception) -> ProviderFailure:
     status = getattr(error, "status_code", None) or getattr(error, "code", None)
+    if status == 503:
+        return ProviderFailure("provider_unavailable_503", ambiguous=True)
+    if status == 429:
+        return ProviderFailure("provider_rate_limited", ambiguous=False)
     definitive = isinstance(status, int) and 400 <= status < 500 and status != 408
     return ProviderFailure(
         f"provider_{'request_rejected' if definitive else 'transport_failure'}",
@@ -104,7 +109,13 @@ def _provider_failure(error: Exception) -> ProviderFailure:
     )
 
 
-def _json_schema(role: str) -> dict:
+def _json_schema(role: str, payload: Mapping | None = None) -> dict:
+    payload = payload or {}
+    if role == "observed_diversity":
+        fields = {name: {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 160}}
+                  for name in ("observations", "avoid_patterns", "explore_directions")}
+        fields["next_missions"] = mission_schema()
+        return {"type": "object", "properties": fields, "required": list(fields), "additionalProperties": False}
     if role.startswith("creative_"):
         return {
             "type": "object",
@@ -112,11 +123,19 @@ def _json_schema(role: str) -> dict:
             "required": ["questions"], "additionalProperties": False,
         }
     if role.startswith("quality_"):
+        candidate_ids = [
+            item["candidate_id"]
+            for item in payload.get("candidates", [])
+            if isinstance(item, dict) and isinstance(item.get("candidate_id"), str)
+        ]
+        candidate_id = {"type": "string"}
+        if candidate_ids:
+            candidate_id["enum"] = candidate_ids
         judgment = {"type": "string", "enum": ["pass", "fail", "uncertain"]}
         item = {
             "type": "object",
             "properties": {
-                "candidate_id": {"type": "string"},
+                "candidate_id": candidate_id,
                 "clarity": judgment,
                 "answerability": judgment,
                 "emotional_safety": judgment,
@@ -125,7 +144,11 @@ def _json_schema(role: str) -> dict:
                     "type": "string",
                     "enum": ["pass", "fail", "uncertain", "not_applicable"],
                 },
-                "reason_codes": {"type": "array", "items": {"type": "string"}},
+                "reason_codes": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 64},
+                    "maxItems": 3,
+                },
             },
             "required": [
                 "candidate_id", "clarity", "answerability", "emotional_safety",
@@ -135,11 +158,26 @@ def _json_schema(role: str) -> dict:
         }
         return {
             "type": "object",
-            "properties": {"records": {"type": "array", "items": item}},
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": item,
+                    "minItems": len(candidate_ids),
+                    "maxItems": len(candidate_ids),
+                }
+            },
             "required": ["records"],
             "additionalProperties": False,
         }
     if role == "semantic_high":
+        pair_ids = [
+            item["pair_id"]
+            for item in payload.get("pairs", [])
+            if isinstance(item, dict) and isinstance(item.get("pair_id"), str)
+        ]
+        pair_id = {"type": "string"}
+        if pair_ids:
+            pair_id["enum"] = pair_ids
         relation = {
             "type": "string",
             "enum": ["same", "overlapping", "different", "opposed", "uncertain"],
@@ -147,14 +185,18 @@ def _json_schema(role: str) -> dict:
         item = {
             "type": "object",
             "properties": {
-                "pair_id": {"type": "string"},
+                "pair_id": pair_id,
                 "scenario": relation,
                 "perspective": relation,
                 "answer_space": relation,
                 "aspect": relation,
                 "wording": relation,
                 "verdict": {"type": "string", "enum": ["distinct", "repeat", "uncertain"]},
-                "reason_codes": {"type": "array", "items": {"type": "string"}},
+                "reason_codes": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 64},
+                    "maxItems": 3,
+                },
             },
             "required": [
                 "pair_id", "scenario", "perspective", "answer_space", "aspect",
@@ -164,22 +206,59 @@ def _json_schema(role: str) -> dict:
         }
         return {
             "type": "object",
-            "properties": {"pairs": {"type": "array", "items": item}},
+            "properties": {
+                "pairs": {
+                    "type": "array",
+                    "items": item,
+                    "minItems": len(pair_ids),
+                    "maxItems": len(pair_ids),
+                }
+            },
             "required": ["pairs"],
             "additionalProperties": False,
         }
+    candidate_ids = [
+        item["candidate_id"]
+        for item in payload.get("questions", [])
+        if isinstance(item, dict) and isinstance(item.get("candidate_id"), str)
+    ]
+    candidate_id = {"type": "string"}
+    if candidate_ids:
+        candidate_id["enum"] = candidate_ids
+    named_themes = sorted(
+        value for value in payload.get("named_themes", []) if isinstance(value, str)
+    )
+    aspects = sorted(
+        value for value in payload.get("aspects", []) if isinstance(value, str)
+    )
+    perspectives = sorted(
+        value for value in payload.get("perspectives", []) if isinstance(value, str)
+    )
+    metadata_fields = [
+        "themes", "aspect", "perspective", "scenario", "answer_space", "wording"
+    ]
     item = {
         "type": "object",
         "properties": {
-            "candidate_id": {"type": "string"},
-            "themes": {"type": "array", "items": {"type": "string"}},
+            "candidate_id": candidate_id,
+            "themes": {
+                "type": "array",
+                "items": {"type": "string", "enum": named_themes},
+                "maxItems": len(named_themes),
+            },
             "themes_resolved": {"type": "boolean"},
-            "aspect": {"type": ["string", "null"]},
-            "perspective": {"type": ["string", "null"]},
-            "scenario": {"type": ["string", "null"]},
-            "answer_space": {"type": ["string", "null"]},
-            "wording": {"type": ["string", "null"]},
-            "uncertain_fields": {"type": "array", "items": {"type": "string"}},
+            "aspect": {"type": ["string", "null"], "enum": [*aspects, None]},
+            "perspective": {
+                "type": ["string", "null"], "enum": [*perspectives, None]
+            },
+            "scenario": {"type": ["string", "null"], "maxLength": 160},
+            "answer_space": {"type": ["string", "null"], "maxLength": 160},
+            "wording": {"type": ["string", "null"], "maxLength": 160},
+            "uncertain_fields": {
+                "type": "array",
+                "items": {"type": "string", "enum": metadata_fields},
+                "maxItems": len(metadata_fields),
+            },
         },
         "required": [
             "candidate_id", "themes", "themes_resolved", "aspect", "perspective",
@@ -189,7 +268,14 @@ def _json_schema(role: str) -> dict:
     }
     return {
         "type": "object",
-        "properties": {"records": {"type": "array", "items": item}},
+        "properties": {
+            "records": {
+                "type": "array",
+                "items": item,
+                "minItems": len(candidate_ids),
+                "maxItems": len(candidate_ids),
+            }
+        },
         "required": ["records"],
         "additionalProperties": False,
     }
@@ -220,11 +306,12 @@ class NativeOpenAIAdapter:
                 reasoning={"effort": role.reasoning},
                 max_output_tokens=role.output_token_limit,
                 text={
+                    "verbosity": "low",
                     "format": {
                         "type": "json_schema",
                         "name": role.schema_version.replace("-", "_"),
                         "strict": True,
-                        "schema": _json_schema(role.role),
+                        "schema": _json_schema(role.role, invocation.payload),
                     }
                 },
                 prompt_cache_key=invocation.idempotency_key[:64],
@@ -235,6 +322,14 @@ class NativeOpenAIAdapter:
         usage = _object(response, "usage")
         if usage is None:
             raise ProviderFailure("missing_provider_usage", ambiguous=True)
+        if _object(response, "status") == "incomplete":
+            incomplete = _object(response, "incomplete_details", {})
+            reason = _object(incomplete, "reason", "unknown")
+            if reason not in {"max_output_tokens", "content_filter"}:
+                reason = "unknown"
+            raise ProviderFailure(
+                f"provider_output_incomplete_{reason}", ambiguous=True
+            )
         input_details = _object(usage, "input_tokens_details", {})
         output_details = _object(usage, "output_tokens_details", {})
         try:
@@ -266,7 +361,10 @@ class NativeGeminiAdapter:
                 from google import genai
             except ImportError as error:  # pragma: no cover - environment dependent
                 raise RuntimeError("install google-genai to use the native adapter") from error
-            client = genai.Client()
+            from google.genai import types
+            client = genai.Client(http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=1), timeout=120000,
+            ))
         self._client = client
         self._allow_estimated_total_generated_cap = allow_estimated_total_generated_cap
 
@@ -291,7 +389,7 @@ class NativeGeminiAdapter:
                         role.total_generated_token_limit or role.output_token_limit
                     ),
                     "response_mime_type": "application/json",
-                    "response_json_schema": _json_schema(role.role),
+                    "response_json_schema": _json_schema(role.role, invocation.payload),
                 },
             )
         except Exception as error:

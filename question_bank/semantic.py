@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
@@ -141,9 +141,45 @@ def route_pair(left: str, right: str, metrics: PairMetrics) -> str:
     if metrics.token_containment >= 0.95 and metrics.character_cosine >= 0.92:
         return "local_reject"
     if (
-        metrics.embedding_cosine < 0.60
-        and metrics.token_jaccard < 0.25
+        metrics.embedding_cosine < 0.70
+        and metrics.token_jaccard <= 0.25
         and metrics.character_cosine < 0.55
     ):
         return "local_distance"
     return "gpt_review"
+
+
+def select_review_pairs(pairs: Sequence[dict]) -> list[dict]:
+    """Select bounded, high-signal LLM comparisons from exhaustive local evidence."""
+
+    by_candidate: dict[str, list[dict]] = defaultdict(list)
+    candidate_order: list[str] = []
+    for pair in pairs:
+        candidate_id = str(pair["candidate_id"])
+        if candidate_id not in by_candidate:
+            candidate_order.append(candidate_id)
+        by_candidate[candidate_id].append(pair)
+
+    selected: list[dict] = []
+    for candidate_id in candidate_order:
+        candidate_pairs = by_candidate[candidate_id]
+        strongest = max(
+            candidate_pairs,
+            key=lambda pair: (
+                float(pair["embedding_cosine"]),
+                float(pair["token_containment"]),
+                float(pair["character_cosine"]),
+                float(pair["token_jaccard"]),
+            ),
+        )
+        selected.append(strongest)
+        selected.extend(
+            pair
+            for pair in candidate_pairs
+            if pair is not strongest
+            and (
+                float(pair["token_jaccard"]) >= 0.40
+                or float(pair["character_cosine"]) >= 0.65
+            )
+        )
+    return selected

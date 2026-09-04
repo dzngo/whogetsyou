@@ -85,6 +85,7 @@ class RoleConfiguration:
     prompt_hash: str = ""
     schema_hash: str = ""
     reported_model_identities: tuple[str, ...] = ()
+    fallback_models: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ class ConfigurationManifest:
     semantic_thresholds_hash: str
     reference_fixture_hash: str
     local_distance_authority: bool
-    execution_version: str = "enrichment-engine-v2"
+    execution_version: str = "enrichment-engine-v2.5"
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -128,10 +129,11 @@ class ConfigurationManifest:
                     reasoning="high",
                     input_token_limit=3000,
                     output_token_limit=1000,
-                    total_generated_token_limit=2200,
-                    reservation_usd=money("0.024300"),
-                    prompt_version="creative-question-batch-v2",
+                    total_generated_token_limit=3200,
+                    reservation_usd=money("0.033300"),
+                    prompt_version="creative-question-batch-v4-dynamic-missions",
                     schema_version="five-questions-v1",
+                    fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash"),
                 )
                 for strategy in (
                     "concrete_life_moments",
@@ -148,8 +150,8 @@ class ConfigurationManifest:
                 4500,
                 3000,
                 money("0.016875"),
-                "quality-medium-v2",
-                "quality-batch-v1",
+                "quality-medium-v3-light-shallow",
+                "quality-batch-v2",
             ),
             RoleConfiguration(
                 "quality_high",
@@ -159,8 +161,8 @@ class ConfigurationManifest:
                 4000,
                 7000,
                 money("0.034500"),
-                "quality-high-v2",
-                "quality-batch-v1",
+                "quality-high-v3-light-shallow",
+                "quality-batch-v2",
             ),
             RoleConfiguration(
                 "semantic_high",
@@ -168,10 +170,16 @@ class ConfigurationManifest:
                 "gpt-5.4-mini",
                 "high",
                 6000,
-                3500,
-                money("0.020250"),
-                "semantic-relations-v2",
-                "semantic-pairs-v1",
+                11000,
+                money("0.054000"),
+                "semantic-relations-v4",
+                "semantic-pairs-v3",
+            ),
+            RoleConfiguration(
+                "observed_diversity", "gemini", "gemini-3.5-flash", "high",
+                6000, 2000, money("0.045000"), "observed-diversity-missions-v2",
+                "diversity-missions-v2", total_generated_token_limit=4000,
+                fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash"),
             ),
             RoleConfiguration(
                 "metadata_medium",
@@ -179,10 +187,10 @@ class ConfigurationManifest:
                 "gpt-5.4-mini",
                 "medium",
                 4500,
-                2400,
-                money("0.014175"),
+                4500,
+                money("0.023625"),
                 "metadata-v2",
-                "metadata-batch-v1",
+                "metadata-batch-v3",
             ),
         )
         roles = tuple(
@@ -203,6 +211,8 @@ class ConfigurationManifest:
             for role in roles
         )
         prices = (
+            PriceEntry("gemini", "gemini-3-flash-preview", money("0.50"), money("0.05"), money("3.00"), "2026-12-31", "prices-2026-09-04"),
+            PriceEntry("gemini", "gemini-3.6-flash", money("0.75"), money("0.075"), money("3.75"), "2026-12-31", "prices-2026-09-04"),
             PriceEntry(
                 "gemini",
                 "gemini-3.5-flash",
@@ -223,9 +233,11 @@ class ConfigurationManifest:
             ),
         )
         policies = {
-            "quality": "quality-v2",
+            "quality": "quality-v4-light-shallow",
+            "diversity": "gemini-dynamic-missions-v2",
+            "gemini_fallback": "503-only-1-2-4-seconds-v1",
             "admission": "admission-v2",
-            "semantic": "semantic-routing-v1",
+            "semantic": "semantic-routing-v5",
             "metadata": "metadata-v2",
             "review": "review-v2",
             "release": "release-v2",
@@ -241,9 +253,16 @@ class ConfigurationManifest:
             "near_copy": {"jaccard": 0.88, "character_cosine": 0.94},
             "containment_copy": {"containment": 0.95, "character_cosine": 0.92},
             "local_distance": {
-                "embedding_cosine_lt": 0.60,
-                "jaccard_lt": 0.25,
+                "embedding_cosine_lt": 0.70,
+                "jaccard_lte": 0.25,
                 "character_cosine_lt": 0.55,
+            },
+            "review_selection": {
+                "strongest_neighbor_per_candidate": 1,
+                "lexical_alert_jaccard_gte": 0.40,
+                "lexical_alert_character_cosine_gte": 0.65,
+                "maximum_pairs": 24,
+                "pairs_per_call": 6,
             },
         }
         payload = {
@@ -268,7 +287,7 @@ class ConfigurationManifest:
             "semantic_thresholds_hash": stable_hash(threshold_policy),
             "reference_fixture_hash": stable_hash(fixture_cases),
             "local_distance_authority": local_distance_authority,
-            "execution_version": "enrichment-engine-v2",
+            "execution_version": "enrichment-engine-v2.10-single-level-campaigns",
             "schema_version": SCHEMA_VERSION,
         }
         return cls(manifest_id=f"config-{stable_hash(payload)[:24]}", **payload)
@@ -294,6 +313,14 @@ class ConfigurationManifest:
             raise ValueError("configuration manifest is missing prompt or schema hashes")
         prices = {(item.provider, item.model): item for item in self.prices}
         for role in self.roles:
+            for model in role.fallback_models:
+                if role.provider != "gemini" or (role.provider, model) not in prices:
+                    raise ValueError("fallback model is missing a Gemini price entry")
+                fallback_price = prices[(role.provider, model)]
+                fallback_bound = money((Decimal(role.input_token_limit) * fallback_price.uncached_input_per_million
+                    + Decimal(role.total_generated_token_limit or 0) * fallback_price.output_per_million) / Decimal(1_000_000))
+                if role.reservation_usd < fallback_bound:
+                    raise ValueError("fallback reservation is below its worst-case bound")
             price = prices.get((role.provider, role.model))
             if price is None:
                 raise ValueError(f"price catalog is missing {role.provider}/{role.model}")
@@ -339,6 +366,7 @@ class RunRequest:
     protected_spot_check_count: int
     configuration_id: str = ""
     batch_index: int = 0
+    comparison_candidate_ids: tuple[str, ...] = ()
 
     @classmethod
     def pilot(
@@ -372,20 +400,26 @@ class RunRequest:
         snapshot_id: str,
         batch_index: int,
         authorization_usd: Decimal = Decimal("2.00"),
+        attempt_limit: int = 100,
+        uncertainty_review_limit: int = 6,
+        protected_spot_check_count: int = 4,
         configuration_id: str = "",
+        levels: tuple[Level, ...] = (Level.SHALLOW, Level.DEEP),
+        comparison_candidate_ids: tuple[str, ...] = (),
     ) -> RunRequest:
         return cls(
             idempotency_key=idempotency_key,
             mode=RunMode.PRODUCTION,
             snapshot_id=snapshot_id,
             candidate_target=20,
-            levels=(Level.SHALLOW, Level.DEEP),
+            levels=levels,
             authorization_usd=money(authorization_usd),
-            attempt_limit=100,
-            uncertainty_review_limit=6,
-            protected_spot_check_count=4,
+            attempt_limit=attempt_limit,
+            uncertainty_review_limit=uncertainty_review_limit,
+            protected_spot_check_count=protected_spot_check_count,
             configuration_id=configuration_id,
             batch_index=batch_index,
+            comparison_candidate_ids=comparison_candidate_ids,
         )
 
 

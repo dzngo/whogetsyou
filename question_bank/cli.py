@@ -45,6 +45,7 @@ def _configuration() -> ConfigurationManifest:
         named_themes=themes, aspects=DEFAULT_ASPECTS, perspectives=DEFAULT_PERSPECTIVES,
         embedding_checksum=checksum,
         embedding_runtime_version=f"fastembed-{_package_version('fastembed')}",
+        local_distance_authority=True,
     )
 
 
@@ -92,9 +93,21 @@ def build_parser() -> argparse.ArgumentParser:
     production.add_argument("--batch-index", type=int, required=True)
     production.add_argument("--prior-run-id")
     production.add_argument("--authorization-usd", default="2.00")
+    production.add_argument("--attempt-limit", type=int, default=100)
+    production.add_argument("--uncertainty-review-limit", type=int, default=6)
     production.add_argument("--idempotency-key", default="")
     production.add_argument("--confirm-paid", action="store_true")
     production.add_argument("--allow-estimated-gemini-cap", action="store_true")
+    reprocess = sub.add_parser("reprocess-candidates")
+    reprocess.add_argument("--source-candidate-id", action="append", required=True)
+    reprocess.add_argument("--batch-index", type=int, required=True)
+    reprocess.add_argument("--prior-run-id")
+    reprocess.add_argument("--authorization-usd", default="2.00")
+    reprocess.add_argument("--attempt-limit", type=int, default=100)
+    reprocess.add_argument("--uncertainty-review-limit", type=int, default=6)
+    reprocess.add_argument("--idempotency-key", default="")
+    reprocess.add_argument("--confirm-paid", action="store_true")
+    reprocess.add_argument("--allow-estimated-gemini-cap", action="store_true")
     report = sub.add_parser("report")
     report.add_argument("run_id")
     review = sub.add_parser("review-resolve")
@@ -148,7 +161,12 @@ def main(argv: list[str] | None = None) -> int:
             acknowledge_difference=args.acknowledge_difference,
         ))
         return 0
-    if args.command in {"run-pilot", "resume-pilot", "run-production-batch"}:
+    if args.command in {
+        "run-pilot",
+        "resume-pilot",
+        "run-production-batch",
+        "reprocess-candidates",
+    }:
         if not args.confirm_paid:
             raise SystemExit(f"{args.command} requires --confirm-paid and a separate explicit authorization")
         if not args.allow_estimated_gemini_cap:
@@ -174,17 +192,37 @@ def main(argv: list[str] | None = None) -> int:
                 if args.command == "resume-pilot"
                 else engine.run(request)
             )
-        else:
+        elif args.command == "run-production-batch":
             request = RunRequest.production_batch(
                 idempotency_key=args.idempotency_key or f"production-{args.batch_index}-{uuid.uuid4().hex}",
                 snapshot_id=engine.empty_snapshot_id,
                 batch_index=args.batch_index,
                 authorization_usd=args.authorization_usd,
+                attempt_limit=args.attempt_limit,
+                uncertainty_review_limit=args.uncertainty_review_limit,
                 configuration_id=config.manifest_id,
             )
             result = (
                 engine.continue_campaign(args.prior_run_id, request)
                 if args.prior_run_id else engine.run(request)
+            )
+        else:
+            request = RunRequest.production_batch(
+                idempotency_key=(
+                    args.idempotency_key
+                    or f"reprocess-{args.batch_index}-{uuid.uuid4().hex}"
+                ),
+                snapshot_id=engine.empty_snapshot_id,
+                batch_index=args.batch_index,
+                authorization_usd=args.authorization_usd,
+                attempt_limit=args.attempt_limit,
+                uncertainty_review_limit=args.uncertainty_review_limit,
+                configuration_id=config.manifest_id,
+            )
+            result = engine.reprocess_candidates(
+                request,
+                tuple(args.source_candidate_id),
+                prior_run_id=args.prior_run_id,
             )
         _print(result); engine.close(); return 0
     if args.command == "report":

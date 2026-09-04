@@ -20,6 +20,7 @@ from question_bank.semantic import (
     normalize_question,
     pair_metrics,
     route_pair,
+    select_review_pairs,
 )
 from question_bank.store import V2Store
 
@@ -456,6 +457,7 @@ class ReleaseModule:
                             distinct_pairs.add(
                                 frozenset((str(evidence_row[1]), neighbor_id))
                             )
+            review_pairs: list[dict] = []
             for index, row in enumerate(rows):
                 for prior_index in range(index):
                     metrics = pair_metrics(
@@ -474,15 +476,26 @@ class ReleaseModule:
                         route == "local_distance"
                         and not self._configuration.local_distance_authority
                     )
-                    relation_key = frozenset(
-                        (
-                            str(row["candidate_id"]),
-                            str(rows[prior_index]["candidate_id"]),
+                    if requires_relation:
+                        review_pairs.append(
+                            {
+                                "candidate_id": str(row["candidate_id"]),
+                                "neighbor_id": str(
+                                    rows[prior_index]["candidate_id"]
+                                ),
+                                "embedding_cosine": metrics.embedding_cosine,
+                                "token_jaccard": metrics.token_jaccard,
+                                "token_containment": metrics.token_containment,
+                                "character_cosine": metrics.character_cosine,
+                            }
                         )
-                    )
-                    if requires_relation and relation_key not in distinct_pairs:
-                        blockers.add("missing_pair_distinct_evidence")
-                        break
+            for pair in select_review_pairs(review_pairs):
+                relation_key = frozenset(
+                    (pair["candidate_id"], pair["neighbor_id"])
+                )
+                if relation_key not in distinct_pairs:
+                    blockers.add("missing_pair_distinct_evidence")
+                    break
         regression = self._db.execute(
             "SELECT 1 FROM regression_records WHERE snapshot_id = ? AND configuration_id = ? AND fixture_hash = ? AND passed = 1",
             (snapshot_id, self._configuration.manifest_id, ReferenceFixture.load_default().fixture_hash),

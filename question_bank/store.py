@@ -902,6 +902,34 @@ class V2Store:
             prior = self.run_row(str(prior))["prior_run_id"]
         return tuple(results)
 
+    def prior_diversity_advice(self, run_id: str) -> dict | None:
+        prior = self.run_row(run_id)["prior_run_id"]
+        while prior:
+            row = self._db.execute(
+                "SELECT payload_json FROM evidence WHERE run_id=? AND evidence_type='gemini_diversity_advice' ORDER BY rowid DESC LIMIT 1",
+                (prior,),
+            ).fetchone()
+            if row:
+                payload = json.loads(row[0])
+                if payload.get("status") == "succeeded":
+                    return payload["advice"]
+                # Do not silently reuse a stale mission after its replacement failed.
+                return None
+            prior = self.run_row(str(prior))["prior_run_id"]
+        return None
+
+    def recent_creative_missions(self, run_id: str, limit: int = 8) -> list[dict]:
+        result = []
+        current = run_id
+        while current and len(result) < limit:
+            rows = self._db.execute(
+                "SELECT payload_json FROM evidence WHERE run_id=? AND evidence_type='creative_mission' ORDER BY rowid",
+                (current,),
+            ).fetchall()
+            result.extend(json.loads(row[0]) for row in rows)
+            current = self.run_row(current)["prior_run_id"]
+        return result[:limit]
+
     def campaign_uncertainty_review_count(self, run_id: str) -> int:
         total = self.review_count(
             run_id,

@@ -33,7 +33,24 @@ class _Responses:
         )
 
 
+class _IncompleteResponses(_Responses):
+    def create(self, **kwargs):
+        response = super().create(**kwargs)
+        response.status = "incomplete"
+        response.incomplete_details = SimpleNamespace(reason="max_output_tokens")
+        response.output_text = ""
+        return response
+
+
 class NativeProviderContractTests(unittest.TestCase):
+    def test_rate_limit_is_distinguished_from_other_request_rejections(self) -> None:
+        from question_bank.providers import _provider_failure
+
+        failure = _provider_failure(SimpleNamespace(status_code=429))
+
+        self.assertEqual("provider_rate_limited", failure.reason)
+        self.assertFalse(failure.ambiguous)
+
     def test_openai_adapter_uses_one_bounded_responses_call_and_native_usage(self) -> None:
         config = ConfigurationManifest.approved_defaults(named_themes=(), aspects=(), perspectives=())
         role = config.role("quality_medium")
@@ -45,6 +62,7 @@ class NativeProviderContractTests(unittest.TestCase):
 
         self.assertEqual(role.output_token_limit, responses.kwargs["max_output_tokens"])
         self.assertEqual({"effort": "medium"}, responses.kwargs["reasoning"])
+        self.assertEqual("low", responses.kwargs["text"]["verbosity"])
         self.assertFalse(responses.kwargs["store"])
         schema = responses.kwargs["text"]["format"]["schema"]
         self.assertEqual(
@@ -62,6 +80,102 @@ class NativeProviderContractTests(unittest.TestCase):
         self.assertEqual(20, result.usage.cached_input_tokens)
         self.assertEqual(30, result.usage.reasoning_or_thought_tokens)
         self.assertEqual({"records": []}, result.output)
+
+    def test_openai_adapter_identifies_output_token_exhaustion(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=(), aspects=(), perspectives=()
+        )
+        role = config.role("semantic_high")
+        adapter = NativeOpenAIAdapter(
+            client=SimpleNamespace(responses=_IncompleteResponses())
+        )
+        invocation = ReservedInvocation(
+            "run", "inv", "key", role, {"pairs": []}, "reservation"
+        )
+
+        with self.assertRaises(ProviderFailure) as caught:
+            adapter.invoke(invocation)
+
+        self.assertEqual(
+            "provider_output_incomplete_max_output_tokens", caught.exception.reason
+        )
+        self.assertTrue(caught.exception.ambiguous)
+
+    def test_large_structured_roles_have_reasoning_and_json_headroom(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=(), aspects=(), perspectives=()
+        )
+
+        self.assertGreaterEqual(config.role("semantic_high").output_token_limit, 11000)
+        self.assertGreaterEqual(config.role("metadata_medium").output_token_limit, 4500)
+        self.assertTrue(
+            all(
+                role.total_generated_token_limit is not None
+                and role.total_generated_token_limit >= 3200
+                for role in config.creative_roles
+            )
+        )
+
+    def test_metadata_schema_exposes_only_configured_vocabulary(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=("Friends", "Work"),
+            aspects=("identity", "relationships"),
+            perspectives=("memory", "preference"),
+        )
+        role = config.role("metadata_medium")
+        responses = _Responses()
+        adapter = NativeOpenAIAdapter(client=SimpleNamespace(responses=responses))
+        payload = {
+            "questions": [],
+            "named_themes": list(config.named_themes),
+            "aspects": list(config.aspects),
+            "perspectives": list(config.perspectives),
+        }
+
+        adapter.invoke(
+            ReservedInvocation("run", "inv", "key", role, payload, "reservation")
+        )
+
+        item = responses.kwargs["text"]["format"]["schema"]["properties"][
+            "records"
+        ]["items"]
+        self.assertEqual(["Friends", "Work"], item["properties"]["themes"]["items"]["enum"])
+        self.assertEqual(
+            ["themes", "aspect", "perspective", "scenario", "answer_space", "wording"],
+            item["properties"]["uncertain_fields"]["items"]["enum"],
+        )
+        self.assertEqual(
+            ["identity", "relationships", None],
+            item["properties"]["aspect"]["enum"],
+        )
+
+    def test_semantic_schema_requires_every_requested_pair_id(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=(), aspects=(), perspectives=()
+        )
+        role = config.role("semantic_high")
+        responses = _Responses()
+        adapter = NativeOpenAIAdapter(client=SimpleNamespace(responses=responses))
+        payload = {
+            "pairs": [
+                {"pair_id": "pair-a"},
+                {"pair_id": "pair-b"},
+                {"pair_id": "pair-c"},
+            ]
+        }
+
+        adapter.invoke(
+            ReservedInvocation("run", "inv", "key", role, payload, "reservation")
+        )
+
+        pairs = responses.kwargs["text"]["format"]["schema"]["properties"]["pairs"]
+        self.assertEqual(3, pairs["minItems"])
+        self.assertEqual(3, pairs["maxItems"])
+        self.assertEqual(
+            ["pair-a", "pair-b", "pair-c"],
+            pairs["items"]["properties"]["pair_id"]["enum"],
+        )
+        self.assertEqual(3, pairs["items"]["properties"]["reason_codes"]["maxItems"])
 
     def test_gemini_adapter_fails_closed_without_total_generated_cap(self) -> None:
         config = ConfigurationManifest.approved_defaults(named_themes=(), aspects=(), perspectives=())
