@@ -13,6 +13,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from models import THEME_DESCRIPTIONS
+from question_bank.adk_app.backend import ProductionWorkflowBackend
+from question_bank.adk_app.commands import GenerateCampaign, ResumeCampaign, parse_campaign_command
+from question_bank.adk_app.runner import run_command
 from question_bank.contracts import ConfigurationManifest, RunRequest, canonical_data
 from question_bank.engine import EnrichmentEngine
 from question_bank.migration import archive_legacy_storage
@@ -68,11 +71,26 @@ def _release(root: Path) -> ReleaseModule:
     )
 
 
+def _adk_backend(root: Path, config: ConfigurationManifest) -> ProductionWorkflowBackend:
+    return ProductionWorkflowBackend(
+        root,
+        provider=ProviderRouter(
+            openai=NativeOpenAIAdapter(),
+            gemini=NativeGeminiAdapter(allow_estimated_total_generated_cap=True),
+        ),
+        configuration=config,
+        embedder=FastEmbedAdapter(checksum=config.embedding_checksum),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="question-bank")
-    parser.add_argument("--root", type=Path, default=Path("storage/question_bank_v2"))
+    parser.add_argument("--root", type=Path, default=Path("storage/question_bank_v2.1"))
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
+    campaign_command = sub.add_parser("campaign-command")
+    campaign_command.add_argument("campaign_command", nargs="+")
+    campaign_command.add_argument("--confirm-paid", action="store_true")
     archive = sub.add_parser("archive-legacy")
     archive.add_argument("--source", type=Path, default=Path("storage/question_bank"))
     archive.add_argument("--archive", type=Path, default=Path("storage/question_bank/legacy_archive/v1"))
@@ -161,6 +179,22 @@ def main(argv: list[str] | None = None) -> int:
             acknowledge_difference=args.acknowledge_difference,
         ))
         return 0
+    if args.command == "campaign-command":
+        command = " ".join(args.campaign_command)
+        parsed = parse_campaign_command(command)
+        if isinstance(parsed, (GenerateCampaign, ResumeCampaign)) and not args.confirm_paid:
+            raise SystemExit(
+                "generate and resume require --confirm-paid and separate explicit authorization"
+            )
+        backend = _adk_backend(root, config)
+        try:
+            events = run_command(command, backend, session_root=root / ".adk")
+            for event in events:
+                if event.output is not None:
+                    _print(event.output)
+        finally:
+            backend.close()
+        return 0
     if args.command in {
         "run-pilot",
         "resume-pilot",
@@ -173,6 +207,30 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(
                 f"{args.command} requires --allow-estimated-gemini-cap because Gemini high thinking has no documented reasoning-inclusive hard cap"
             )
+        if args.command in {"run-pilot", "run-production-batch"}:
+            if getattr(args, "prior_run_id", None):
+                raise SystemExit(
+                    "legacy prior-run continuation is retired; use campaign-command resume"
+                )
+            campaign_id = (
+                args.idempotency_key
+                or f"{args.command}-{getattr(args, 'batch_index', 0)}-{uuid.uuid4().hex}"
+            )
+            command = (
+                f"generate campaign={campaign_id} proposal_target=20 level=mixed "
+                f"bank=v2.1 budget_usd={args.authorization_usd}"
+            )
+            backend = _adk_backend(root, config)
+            try:
+                events = run_command(command, backend, session_root=root / ".adk")
+                for event in events:
+                    if event.output is not None:
+                        _print(event.output)
+            finally:
+                backend.close()
+            return 0
+        if args.command == "resume-pilot":
+            raise SystemExit("resume-pilot is retired; use campaign-command resume")
         provider = ProviderRouter(
             openai=NativeOpenAIAdapter(),
             gemini=NativeGeminiAdapter(allow_estimated_total_generated_cap=True),

@@ -103,7 +103,7 @@ Phases:
 
 ## 3. Offline Question Bank Enrichment
 
-The `question_bank` package is the offline multi-agent system that builds the future Question Bank. It does not alter live gameplay generation or question sampling.
+The `question_bank` package is the offline multi-agent system that builds the future Question Bank. It does not alter live gameplay generation or question sampling. Google ADK 2 is the production orchestrator for every new campaign; ADK Web and the CLI load the same explicit graph and native provider boundary.
 
 ### 3.1 Multi-agent architecture
 
@@ -111,14 +111,35 @@ The architecture deliberately mixes Gemini and GPT while keeping admission autho
 
 | Stage | Agent or Module | Model and reasoning | Responsibility |
 | --- | --- | --- | --- |
-| Creative proposal | Four isolated LLM Agents | Gemini 3.5 Flash, high thinking | Each creative strategy returns five finished question texts. Agents do not assign Themes or see sibling output. |
+| Creative proposal | Four isolated LLM Agents | Gemini 3.5 Flash Lite, high thinking | Each creative strategy returns five finished question texts. Agents do not assign Themes or see sibling output. |
 | Quality evaluation | Routine quality LLM Agent | GPT-5.4-mini, medium reasoning | Evaluates clarity, answerability, emotional safety, Level fit, and Deep revelation in two batches. |
 | Quality escalation | Uncertainty-only LLM Agent | GPT-5.4-mini, high reasoning | Re-evaluates only genuinely uncertain quality records, including a Deep evaluator abstention. |
 | Semantic routing | Local deterministic Module | Pinned FastEmbed model plus lexical metrics | Rejects exact/near copies and authoritatively passes clearly different pairs. |
 | Semantic relation | Ambiguity-only LLM Agent | GPT-5.4-mini, high reasoning | Reviews only pairs not safely resolved by the local Module. |
 | Metadata | Classification LLM Agent | GPT-5.4-mini, medium reasoning | Assigns zero-to-many Themes plus Aspect and Perspective after question admission, constrained to the configured vocabulary. Tentative values marked uncertain are stored as pending rather than trusted. |
-| Observed diversity + next missions | Advisory LLM Agent over local counts | Gemini 3.5 Flash, high thinking | Interprets observed patterns and writes four new missions for the next batch. Cannot set quotas or change admission. |
-| Orchestration | Deterministic Modules | No LLM | Control budgets, ordering, evidence, admission, review allocation, snapshots, and release. |
+| Observed diversity + next missions | Advisory LLM Agent over local counts | Gemini 3.5 Flash Lite, high thinking | Interprets observed patterns and writes four new missions for the next batch. Cannot set quotas or change admission. |
+| Orchestration | Google ADK 2 graph + deterministic Modules | No LLM | Exposes and controls every production stage while existing Python modules retain budgets, evidence, admission, review, and export authority. |
+
+The graph displays campaign initialization, mission planning, four concurrent creative Agents, creative join/proposal persistence, duplicate preflight, routine and uncertainty quality review, local and LLM semantic review, admission, Observation, metadata, final diversity evidence, atomic export, and the batch loop. Only the four creative Agents run concurrently; batches and every downstream stage run sequentially. Candidate text, costs, decisions, and human-review cases stay in the Question Bank SQLite database. ADK stores lightweight local session/event history in SQLite under `.adk/`.
+
+Run the production control surface locally:
+
+```bash
+export QUESTION_BANK_ROOT=storage/question_bank_v2.1
+export QUESTION_BANK_EMBEDDING_CHECKSUM=<verified-checksum>
+.venv/bin/adk web --session_service_uri=sqlite:///storage/question_bank_v2.1/.adk/web-sessions.sqlite3 question_bank
+```
+
+Select `adk_app` in ADK Web and submit one exact command:
+
+```text
+generate campaign=<id> proposal_target=<multiple-of-20> level=<mixed|shallow|deep> bank=v2.1 budget_usd=<positive>
+status campaign=<id>
+cancel campaign=<id>
+resume campaign=<id> budget_usd=<positive>
+```
+
+`proposal_target` counts generated proposals processed, not Staged or unique questions. Generate and resume are spending authorizations; the CLI additionally requires `--confirm-paid`. Cancellation is cooperative: an active provider attempt is accounted for, then no new paid attempt starts. Resume adds a fresh authorization and reuses durable progress. It is guarded by a renewable execution lease, preserves Unknown Spend, checks the pinned configuration atomically, and never reprocesses open human-review cases. Status reports reconciled, active, unknown, and remaining USD. In ADK Web, Generate and Resume run in a server-owned session, so closing the browser does not cancel the campaign while the server stays up.
 
 The four creative call slots remain isolated and each generates five finished questions, individually evaluated afterward. Gemini's existing diversity call now also writes the next four missions: two Shallow and two Deep. Each agent receives only its assigned mission, not sibling missions or outputs. Stable role names identify call slots; dynamic missions replace their original fixed strategies. The mission writer sees local distributions (including themes), a bounded question sample, and recent missions. It considers Aspect, Scenario, Perspective, Answer Space, and optional Contrast (alternatives/trade-offs). All dimension hints may be omitted with `null`; theme hints may be empty and never assign membership. Themes are still classified after admission, with multiple memberships allowed and no theme quotas.
 
@@ -139,21 +160,45 @@ For 200 Shallow-only proposals in bank v2.1:
 
 `--level` supports `mixed` (default), `shallow`, and `deep`. Single-Level campaigns assign all four creative slots and all four next missions to that Level. `--target` is a multiple of 20; it counts proposals, not guaranteed unique or accepted questions. Exports use campaign-specific filenames and include only new normalized texts. Each question is still evaluated individually. The first run records the fixed comparison IDs and Level selection; continuations must retain both.
 
-The current local semantic policy is `semantic-routing-v5`: local distance requires embedding cosine `< 0.70`, token Jaccard `<= 0.25`, and character cosine `< 0.55`. Exact and lexical near-copy rejection remains unchanged. From the remaining ambiguous comparisons, GPT receives each candidate's strongest neighbour plus additional strong lexical alerts, bounded to 24 pairs in up to four calls of at most six. The semantic contract defines Scenario, Perspective, and Answer Space explicitly, requires the final verdict to agree with those three labels, limits reason codes to three, and provides 11,000 output tokens for high-reasoning structured output.
+The current local semantic policy is `semantic-routing-v5`: local distance requires embedding cosine `< 0.70`, token Jaccard `<= 0.25`, and character cosine `< 0.55`. Exact and lexical near-copy rejection remains unchanged. From the remaining ambiguous comparisons, GPT receives each candidate's strongest neighbour plus additional strong lexical alerts, in calls of at most six pairs. Engine v2.11 removes the former 24-pair batch limit (`pair_overflow`); total work is bounded by the campaign budget and attempt allowance, with a reservation before every call. No selected comparisons are silently dropped to fit a batch limit. The semantic contract defines Scenario, Perspective, and Answer Space explicitly, requires the final verdict to agree with those three labels, limits reason codes to three, and provides 11,000 output tokens for high-reasoning structured output.
 
 If one semantic chunk fails, only candidates whose admission depends on that failed or later chunk become operationally unresolved. Local passes and already resolved candidates continue through staging and metadata. Saved Staged, awaiting-review, operationally unresolved, and `review_budget_exhausted` candidates can be reprocessed under a new configuration without creative calls. Gemini diversity advice may still run after staging.
 
+For a paused shallow campaign, `python -m question_bank.recover_campaign --root storage/question_bank_v2.1 --campaign-id <original-id> --target 800 --cap-usd 6 --confirm-paid --continue-generation` first reprocesses unique saved overflow candidates, then proposes the remaining batches only if recovery finishes without operational failures. The cap must match the original authorization. A frozen recovery plan deducts all original reconciled spending and active/unknown reservations, and chains recovery and further generation under the remainder. Do not resume the original process alongside recovery. Original records remain unchanged; the campaign CSV overlays recovery outcomes without duplicating questions. Omit `--continue-generation` to perform recovery only. The target counts saved proposals, not guaranteed unique or staged questions.
+
 Every provider call uses structured input and output. GPT batch schemas enumerate the exact requested candidate or pair IDs and require the exact record count. GPT calls use low output verbosity and reserve enough output tokens for both reasoning and the complete JSON record set. The system records the provider/model identity, reasoning setting, prompt and schema hashes, native usage, cost evidence, and concise reason codes. It neither requests nor stores private chain-of-thought. LLM Agents cannot mutate trusted bank state or authorize their own spending.
 
-### 3.2 Cost and failure safety
+### 3.2 Agent input/output dashboard
 
-Before network I/O, the deterministic ledger reserves the worst-case list-price exposure. Successful calls reconcile against provider-reported usage. A crash or ambiguous transport result becomes Unknown Spend. The explicit v2.1 exception is a confirmed Gemini 503: try `gemini-3.5-flash`, `gemini-3-flash-preview`, `gemini-3.6-flash`, then `gemini-3.5-flash` once more, with 1/2/4-second waits. Each attempt has its own reservation and actual model identity; earlier unknown spend remains charged against the cap. Other errors do not trigger model switching. Gemini SDK automatic retries are disabled so the ledger sees each attempt. Exact application-cache reuse consumes neither a provider attempt nor additional budget.
+Phoenix provides an optional local dashboard for real campaign invocations. The trace hierarchy is Campaign → Batch → workflow stage → Gemini/OpenAI attempt, including model fallback attempts and semantic chunks. Each span shows the exact credential-free logical request passed to the SDK, the parsed structured response, provider, requested and reported model, thinking level, token usage, cost, status, and sanitized error details. Terminal batch and campaign spans are closed immediately. API keys, transport headers, and private chain-of-thought are never captured.
+
+Install and start the local dashboard:
+
+```bash
+PHOENIX_WORKING_DIR=storage/question_bank_phoenix \
+  PHOENIX_PORT=6006 PHOENIX_GRPC_PORT=4319 \
+  uvx --from arize-phoenix==20.8.0 phoenix serve
+```
+
+In a second terminal, opt a campaign into tracing and use its normal command:
+
+```bash
+export QUESTION_BANK_PHOENIX_ENDPOINT=http://127.0.0.1:6006/v1/traces
+export QUESTION_BANK_PHOENIX_PROJECT=question-bank-enrichment
+# Run the normal question_bank.campaign command (the ADK CLI wrapper).
+```
+
+Open `http://127.0.0.1:6006` to inspect Agent inputs and outputs. Tracing is off when `QUESTION_BANK_PHOENIX_ENDPOINT` is unset. Dashboard startup, export, or shutdown failures are logged and never change question admission, budget accounting, or provider retry behavior.
+
+### 3.3 Cost and failure safety
+
+Before network I/O, the deterministic ledger reserves the worst-case list-price exposure. Successful calls reconcile against provider-reported usage. A crash or ambiguous transport result becomes Unknown Spend. The explicit v2.1 exception is a confirmed Gemini 503: try `gemini-3.5-flash-lite`, `gemini-3-flash-preview`, `gemini-3.6-flash`, then `gemini-3.5-flash-lite` once more, with 1/2/4-second waits. Each attempt has its model-specific reservation and actual model identity; earlier unknown spend remains charged against the cap. Other errors do not trigger model switching. Gemini SDK automatic retries are disabled so the ledger sees each attempt. Exact application-cache reuse consumes neither a provider attempt nor additional budget.
 
 The production batch normally uses four creative calls, two routine quality calls, optional quality escalation, up to four semantic calls, one advisory diversity call, and one metadata call. Fallbacks consume additional attempts within the explicit campaign limit. Local decisions can remove semantic calls. Diversity advice failures are recorded and do not reverse question admission; local feedback remains available.
 
 Gemini high thinking currently has no documented reasoning-inclusive hard cap. Creative calls use a 3,200-token estimated reasoning-plus-output allowance after live 2,200-token truncation failures. Paid commands therefore require both `--confirm-paid` and the explicit `--allow-estimated-gemini-cap` acknowledgement.
 
-### 3.3 Configuration and operation
+### 3.4 Configuration and operation
 
 Credentials are loaded through `python-dotenv` from the existing `.env` as `GOOGLE_API_KEY` and `OPENAI_API_KEY`; operators and logs must never print them. The pinned FastEmbed artifact checksum is supplied as `QUESTION_BANK_EMBEDDING_CHECKSUM`.
 
@@ -174,14 +219,12 @@ Run a separate v2.1 campaign (five batches, 50 Shallow + 50 Deep proposals; acce
 
 This creates a separate database and refreshes `generated_100_questions.csv` after every batch. It does not import or mutate the old bank, so deduplication is scoped to this new campaign. The cap is cumulative across its five batches, including fallback attempts. Repeating the same command reuses saved batch reports; it does not silently retry a stopped batch. The final export includes rejected and unresolved proposals with their states, not just Staged Questions. Model pricing is pinned from [Google's pricing documentation](https://ai.google.dev/gemini-api/docs/pricing).
 
-Run one explicitly authorized pilot:
+Run one explicitly authorized 20-proposal campaign through the shared ADK graph:
 
 ```bash
-python -m question_bank --root storage/question_bank_v2 run-pilot \
-  --authorization-usd 0.20 \
-  --idempotency-key pilot-001 \
-  --confirm-paid \
-  --allow-estimated-gemini-cap
+python -m question_bank --root storage/question_bank_v2.1 campaign-command \
+  generate campaign=pilot-001 proposal_target=20 level=mixed bank=v2.1 budget_usd=0.25 \
+  --confirm-paid
 ```
 
 Inspect a durable run without making provider calls:
@@ -190,7 +233,7 @@ Inspect a durable run without making provider calls:
 python -m question_bank --root storage/question_bank_v2 report <run-id>
 ```
 
-`resume-pilot` and `run-production-batch` continue work under a new explicit authorization. Large production campaigns must set explicit `--attempt-limit` and `--uncertainty-review-limit` values rather than silently inheriting the 200-question defaults. `reprocess-candidates` reevaluates up to twenty saved non-definitive candidates without creative calls. `review-resolve` handles bounded question-specific uncertainty. `snapshot-build`, `release-verify`, `regression-record`, `spot-check-select`, `spot-check-record`, `release-publish`, `release-withdraw`, and `release-rollback` are provider-free release operations. Run `python -m question_bank --help` for the complete command interface.
+`resume-pilot` is retired; use `campaign-command resume`. The compatibility `run-pilot` and `run-production-batch` commands create a 20-proposal campaign through the same ADK graph. `reprocess-candidates` remains a provider-backed recovery operation for existing saved candidates, not a new generation campaign. `review-resolve` handles bounded question-specific uncertainty. `snapshot-build`, `release-verify`, `regression-record`, `spot-check-select`, `spot-check-record`, `release-publish`, `release-withdraw`, and `release-rollback` are provider-free release operations. Run `python -m question_bank --help` for the complete command interface.
 
 For a partial campaign CSV while generation is running, use the provider-free exporter:
 

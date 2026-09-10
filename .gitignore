@@ -177,6 +177,7 @@ cython_debug/
 *.csv
 evals/results/*.jsonl
 cache/
+.adk/
 
 # Local credentials
 .streamlit/secrets.toml

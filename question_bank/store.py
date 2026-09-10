@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -197,8 +198,55 @@ class V2Store:
                 evidence_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS campaigns (
+                campaign_id TEXT PRIMARY KEY,
+                proposal_target INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                bank TEXT NOT NULL,
+                authorized_microusd INTEGER NOT NULL,
+                attempt_limit INTEGER NOT NULL DEFAULT 120,
+                configuration_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                active_stage TEXT NOT NULL DEFAULT '',
+                batch_index INTEGER NOT NULL DEFAULT 0,
+                generated_count INTEGER NOT NULL DEFAULT 0,
+                unique_count INTEGER NOT NULL DEFAULT 0,
+                staged_count INTEGER NOT NULL DEFAULT 0,
+                review_count INTEGER NOT NULL DEFAULT 0,
+                rejected_count INTEGER NOT NULL DEFAULT 0,
+                unresolved_count INTEGER NOT NULL DEFAULT 0,
+                last_run_id TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT NOT NULL DEFAULT '',
+                execution_token TEXT NOT NULL DEFAULT '',
+                lease_expires_at REAL NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS campaign_events (
+                event_id TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL REFERENCES campaigns(campaign_id),
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             """
         )
+        campaign_columns = {
+            str(row[1]) for row in self._db.execute("PRAGMA table_info(campaigns)")
+        }
+        if "execution_token" not in campaign_columns:
+            self._db.execute(
+                "ALTER TABLE campaigns ADD COLUMN execution_token TEXT NOT NULL DEFAULT ''"
+            )
+        if "lease_expires_at" not in campaign_columns:
+            self._db.execute(
+                "ALTER TABLE campaigns ADD COLUMN lease_expires_at REAL NOT NULL DEFAULT 0"
+            )
+        if "attempt_limit" not in campaign_columns:
+            self._db.execute(
+                "ALTER TABLE campaigns ADD COLUMN attempt_limit INTEGER NOT NULL DEFAULT 120"
+            )
         version = self._db.execute(
             "SELECT schema_version FROM schema_metadata WHERE singleton = 1"
         ).fetchone()
@@ -209,8 +257,205 @@ class V2Store:
         )
         self._db.commit()
 
+    def create_campaign(
+        self,
+        *,
+        campaign_id: str,
+        proposal_target: int,
+        level: str,
+        bank: str,
+        budget_usd: Decimal,
+        configuration_id: str,
+        execution_token: str = "",
+    ) -> bool:
+        """Create durable campaign control state without changing bank records."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                """INSERT OR IGNORE INTO campaigns(
+                    campaign_id, proposal_target, level, bank, authorized_microusd,
+                    attempt_limit, configuration_id, status, execution_token, lease_expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?)""",
+                (
+                    campaign_id,
+                    proposal_target,
+                    level,
+                    bank,
+                    _microusd(budget_usd),
+                    max(120, proposal_target * 3),
+                    configuration_id,
+                    execution_token,
+                    time.time() + 900 if execution_token else 0,
+                ),
+            )
+            if not cursor.rowcount:
+                return False
+            self._add_campaign_event_locked(
+                campaign_id,
+                "created",
+                {
+                    "proposal_target": proposal_target,
+                    "level": level,
+                    "bank": bank,
+                    "authorized_usd": format(money(budget_usd), "f"),
+                    "configuration_id": configuration_id,
+                },
+            )
+            return True
+
+    def campaign_status(self, campaign_id: str) -> dict:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM campaigns WHERE campaign_id = ?", (campaign_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(campaign_id)
+        result = dict(row)
+        result["authorized_usd"] = format(
+            _usd(int(result.pop("authorized_microusd"))), "f"
+        )
+        result["cancel_requested"] = bool(result["cancel_requested"])
+        return result
+
+    def campaign_events(self, campaign_id: str) -> tuple[dict, ...]:
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT event_type, payload_json, created_at
+                   FROM campaign_events WHERE campaign_id = ? ORDER BY rowid""",
+                (campaign_id,),
+            ).fetchall()
+        return tuple(
+            {
+                "event_type": str(row["event_type"]),
+                "payload": json.loads(row["payload_json"]),
+                "created_at": str(row["created_at"]),
+            }
+            for row in rows
+        )
+
+    def update_campaign(self, campaign_id: str, **changes: object) -> None:
+        allowed = {
+            "status",
+            "active_stage",
+            "batch_index",
+            "generated_count",
+            "unique_count",
+            "staged_count",
+            "review_count",
+            "rejected_count",
+            "unresolved_count",
+            "last_run_id",
+            "cancel_requested",
+            "error_code",
+        }
+        if not changes or not set(changes) <= allowed:
+            raise ValueError("campaign update contains no fields or unsupported fields")
+        normalized = {
+            key: int(value) if key == "cancel_requested" else value
+            for key, value in changes.items()
+        }
+        assignments = ", ".join(f"{key} = ?" for key in normalized)
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                f"UPDATE campaigns SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE campaign_id = ?",
+                (*normalized.values(), campaign_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(campaign_id)
+            self._add_campaign_event_locked(campaign_id, "progress", normalized)
+
+    def request_campaign_cancel(self, campaign_id: str) -> None:
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                """UPDATE campaigns
+                   SET cancel_requested = 1, status = 'cancel_requested',
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE campaign_id = ?""",
+                (campaign_id,),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(campaign_id)
+            self._add_campaign_event_locked(campaign_id, "cancel_requested", {})
+
+    def resume_campaign(
+        self, campaign_id: str, budget_usd: Decimal, *,
+        expected_configuration_id: str,
+        execution_token: str = "",
+    ) -> str:
+        additional = _microusd(budget_usd)
+        token = execution_token or f"execution-{uuid.uuid4().hex}"
+        now = time.time()
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                """UPDATE campaigns
+                   SET authorized_microusd = authorized_microusd + ?,
+                       attempt_limit = attempt_limit + CASE
+                           WHEN proposal_target * 3 > 120 THEN proposal_target * 3
+                           ELSE 120 END,
+                       cancel_requested = 0, status = 'running', error_code = '',
+                       execution_token = ?, lease_expires_at = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE campaign_id = ? AND configuration_id = ? AND (
+                       status IN ('stopped', 'cancelled')
+                       OR (status = 'running' AND lease_expires_at < ?)
+                   )""",
+                (additional, token, now + 900, campaign_id, expected_configuration_id, now),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(
+                    "campaign is complete, already active, or uses another configuration"
+                )
+            self._add_campaign_event_locked(
+                campaign_id,
+                "resumed",
+                {"additional_authorization_usd": format(money(budget_usd), "f")},
+            )
+        return token
+
+    def renew_campaign_lease(self, campaign_id: str, execution_token: str) -> None:
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                """UPDATE campaigns SET lease_expires_at = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE campaign_id = ? AND execution_token = ?
+                   AND status IN ('running', 'cancel_requested')""",
+                (time.time() + 900, campaign_id, execution_token),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("campaign execution lease is not active")
+
+    def stop_campaign_execution(
+        self, campaign_id: str, execution_token: str, reason: str
+    ) -> bool:
+        """Stop only the execution that still owns the durable campaign lease."""
+        with self._lock, self._db:
+            cursor = self._db.execute(
+                """UPDATE campaigns SET status = 'stopped', error_code = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                   WHERE campaign_id = ? AND execution_token = ?""",
+                (reason, campaign_id, execution_token),
+            )
+            if cursor.rowcount:
+                self._add_campaign_event_locked(
+                    campaign_id, "execution_stopped", {"reason": reason}
+                )
+            return bool(cursor.rowcount)
+
+    def _add_campaign_event_locked(
+        self, campaign_id: str, event_type: str, payload: object
+    ) -> None:
+        self._db.execute(
+            """INSERT INTO campaign_events(
+                event_id, campaign_id, event_type, payload_json
+            ) VALUES (?, ?, ?, ?)""",
+            (
+                f"campaign-event-{uuid.uuid4().hex}",
+                campaign_id,
+                event_type,
+                json.dumps(canonical_data(payload), sort_keys=True),
+            ),
+        )
+
     def install_configuration(self, configuration: ConfigurationManifest) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "INSERT OR IGNORE INTO configurations VALUES (?, ?)",
                 (
@@ -222,7 +467,7 @@ class V2Store:
     def ensure_empty_snapshot(self) -> str:
         content_hash = stable_hash([])
         snapshot_id = f"snapshot-{content_hash[:24]}"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "INSERT OR IGNORE INTO snapshots VALUES (?, '[]', ?, 'trusted')",
                 (snapshot_id, content_hash),
@@ -267,7 +512,7 @@ class V2Store:
         if row:
             return str(row["run_id"]), False
         run_id = f"run-{uuid.uuid4().hex}"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 """INSERT INTO runs(
                     run_id, idempotency_key, request_json, configuration_id, snapshot_id,
@@ -293,7 +538,7 @@ class V2Store:
         return row
 
     def set_run_state(self, run_id: str, status: str, stop_reason: str) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE runs SET status = ?, stop_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?",
                 (status, stop_reason, run_id),
@@ -352,7 +597,7 @@ class V2Store:
             "SELECT reservation_id FROM ledger_entries WHERE run_id = ? AND state = 'active'",
             (run_id,),
         ).fetchall()
-        with self._db:
+        with self._lock, self._db:
             for row in rows:
                 reservation_id = str(row[0])
                 self._db.execute(
@@ -496,7 +741,7 @@ class V2Store:
         reported_model: str,
         response_id: str,
     ) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 """UPDATE ledger_entries
                     SET actual_microusd = ?, state = 'reconciled', usage_json = ?
@@ -556,7 +801,7 @@ class V2Store:
         from question_bank.contracts import ProviderResult, ProviderUsage
 
         usage = json.loads(row["usage_json"])
-        with self._db:
+        with self._lock, self._db:
             self._db.execute("UPDATE runs SET cache_hits = cache_hits + 1 WHERE run_id = ?", (run_id,))
         return ProviderResult(
             json.loads(row["output_json"]), ProviderUsage(**usage),
@@ -572,7 +817,7 @@ class V2Store:
         ambiguous: bool,
     ) -> None:
         state = "unknown" if ambiguous else "released"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE ledger_entries SET state = ?, error_code = ? WHERE reservation_id = ? AND state = 'active'",
                 (state, error_code, reservation_id),
@@ -594,7 +839,7 @@ class V2Store:
             )
 
     def add_candidates(self, run_id: str, candidates: tuple[CandidateReport, ...]) -> None:
-        with self._db:
+        with self._lock, self._db:
             for ordinal, candidate in enumerate(candidates):
                 self._db.execute(
                     """INSERT OR IGNORE INTO candidates(
@@ -619,13 +864,67 @@ class V2Store:
                     ),
                 )
 
+    def persist_campaign_candidates(
+        self,
+        campaign_id: str,
+        run_id: str,
+        candidates: tuple[CandidateReport, ...],
+        *,
+        execution_token: str,
+    ) -> int:
+        """Persist proposals and advance the campaign count in one transaction."""
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                campaign = self._db.execute(
+                    """SELECT generated_count FROM campaigns
+                       WHERE campaign_id = ? AND execution_token = ?
+                       AND status IN ('running', 'cancel_requested')""",
+                    (campaign_id, execution_token),
+                ).fetchone()
+                if campaign is None:
+                    raise ValueError("campaign execution lease is not active")
+                inserted = 0
+                for ordinal, candidate in enumerate(candidates):
+                    cursor = self._db.execute(
+                        """INSERT OR IGNORE INTO candidates(
+                            candidate_id, run_id, ordinal, text, level, strategy, state,
+                            reason_codes_json, themes_json, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            candidate.candidate_id, run_id, ordinal, candidate.text,
+                            candidate.level.value, candidate.strategy, candidate.state.value,
+                            json.dumps(candidate.reason_codes),
+                            json.dumps(candidate.theme_memberships)
+                            if candidate.theme_memberships is not None else None,
+                            json.dumps(candidate.metadata, sort_keys=True),
+                        ),
+                    )
+                    inserted += max(cursor.rowcount, 0)
+                self._db.execute(
+                    """UPDATE campaigns
+                       SET generated_count = generated_count + ?, last_run_id = ?,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE campaign_id = ? AND execution_token = ?""",
+                    (inserted, run_id, campaign_id, execution_token),
+                )
+                self._add_campaign_event_locked(
+                    campaign_id, "proposals_persisted",
+                    {"run_id": run_id, "inserted": inserted},
+                )
+                self._db.commit()
+                return inserted
+            except Exception:
+                self._db.rollback()
+                raise
+
     def set_candidate_state(
         self, run_id: str, state: CandidateState, reason_codes: tuple[str, ...]
     ) -> None:
         rows = self._db.execute(
             "SELECT candidate_id FROM candidates WHERE run_id = ? AND state = 'proposed'", (run_id,)
         ).fetchall()
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE candidates SET state = ?, reason_codes_json = ? WHERE run_id = ? AND state = 'proposed'",
                 (state.value, json.dumps(reason_codes), run_id),
@@ -644,7 +943,7 @@ class V2Store:
         ).fetchone()
         if not row:
             raise KeyError(candidate_id)
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE candidates SET state = ?, reason_codes_json = ? WHERE candidate_id = ?",
                 (state.value, json.dumps(reason_codes), candidate_id),
@@ -669,7 +968,7 @@ class V2Store:
         themes: tuple[str, ...] | None,
         metadata: dict,
     ) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE candidates SET themes_json = ?, metadata_json = ? WHERE candidate_id = ?",
                 (
@@ -701,7 +1000,7 @@ class V2Store:
         packet: dict,
     ) -> str:
         case_id = f"review-{stable_hash([run_id, candidate_id])[:24]}"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 """INSERT OR IGNORE INTO review_cases(
                     case_id, run_id, candidate_id, review_kind, priority, packet_json
@@ -803,7 +1102,7 @@ class V2Store:
             raise ValueError("review case already resolved with another idempotency key")
         result = {**case, "status": "resolved", "resolution": resolution}
         resolution_id = f"resolution-{stable_hash([case_id, idempotency_key, resolution])[:24]}"
-        with self._db:
+        with self._lock, self._db:
             if metadata_update is not None:
                 themes, metadata = metadata_update
                 self._db.execute(
@@ -847,7 +1146,7 @@ class V2Store:
             return json.loads(row[0])
         result = {"case_id": case_id, "status": "open", "evidence": evidence}
         supplement_id = f"supplement-{stable_hash([case_id, idempotency_key, evidence])[:24]}"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "INSERT INTO review_supplements VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
                 (supplement_id, case_id, idempotency_key, json.dumps(result, sort_keys=True)),
@@ -950,7 +1249,7 @@ class V2Store:
         payload: dict,
     ) -> str:
         evidence_id = f"evidence-{stable_hash([run_id, candidate_id, evidence_type, payload, configuration_id])[:24]}"
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "INSERT OR IGNORE INTO evidence VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
                 (
@@ -1039,7 +1338,7 @@ class V2Store:
         )
 
     def store_report(self, report: RunReport) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.execute(
                 "UPDATE runs SET report_json = ?, status = ?, stop_reason = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?",
                 (

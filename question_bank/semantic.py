@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import threading
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -48,16 +49,28 @@ class FastEmbedAdapter:
         if not checksum or checksum == "test-or-install-time-checksum":
             raise ValueError("a verified embedding artifact checksum is required")
         self.checksum = checksum
-        if model is None:
-            try:
-                from fastembed import TextEmbedding
-            except ImportError as error:  # pragma: no cover - optional runtime
-                raise RuntimeError("install fastembed to use production embeddings") from error
-            model = TextEmbedding(model_name=self.model_id)
         self._model = model
+        self._model_lock = threading.Lock()
+
+    def _load_model(self):
+        if self._model is not None:
+            return self._model
+        with self._model_lock:
+            if self._model is None:
+                try:
+                    from fastembed import TextEmbedding
+                except ImportError as error:  # pragma: no cover - optional runtime
+                    raise RuntimeError(
+                        "install fastembed to use production embeddings"
+                    ) from error
+                self._model = TextEmbedding(model_name=self.model_id)
+        return self._model
 
     def embed(self, texts: Sequence[str]) -> list[tuple[float, ...]]:
-        vectors = [tuple(float(value) for value in vector) for vector in self._model.embed(list(texts))]
+        vectors = [
+            tuple(float(value) for value in vector)
+            for vector in self._load_model().embed(list(texts))
+        ]
         if any(len(vector) != self.dimensions for vector in vectors):
             raise ValueError("embedding dimensions do not match the pinned manifest")
         return vectors

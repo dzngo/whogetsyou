@@ -23,7 +23,12 @@ from question_bank.contracts import (
     stable_hash,
 )
 from question_bank.diversity import observed_diversity
-from question_bank.providers import ProviderAdapter, ProviderFailure
+from question_bank.observability import observability_from_environment
+from question_bank.providers import (
+    ProviderAdapter,
+    ProviderFailure,
+    render_provider_request,
+)
 from question_bank.semantic import (
     EmbeddingAdapter,
     normalize_question,
@@ -50,12 +55,18 @@ class EnrichmentEngine:
         provider: ProviderAdapter,
         configuration: ConfigurationManifest,
         embedder: EmbeddingAdapter,
+        observability=None,
     ) -> None:
         self._validate_configuration(configuration)
         self._store = V2Store(root)
         self._provider = provider
         self._configuration = configuration
         self._embedder = embedder
+        self._observability = (
+            observability
+            if observability is not None
+            else observability_from_environment()
+        )
         self._store.install_configuration(configuration)
         self.empty_snapshot_id = self._store.ensure_empty_snapshot()
 
@@ -77,9 +88,28 @@ class EnrichmentEngine:
         configuration.validate_content_address()
 
     def close(self) -> None:
-        self._store.close()
+        try:
+            self._observability.close()
+        finally:
+            self._store.close()
 
     def run(
+        self,
+        request: RunRequest,
+        *,
+        prior_run_id: str | None = None,
+        seed_candidates: tuple[CandidateReport, ...] | None = None,
+    ) -> RunReport:
+        with self._observability.batch(request) as observation:
+            report = self._run(
+                request,
+                prior_run_id=prior_run_id,
+                seed_candidates=seed_candidates,
+            )
+            observation.success(report)
+            return report
+
+    def _run(
         self,
         request: RunRequest,
         *,
@@ -320,19 +350,9 @@ class EnrichmentEngine:
             self._store.store_report(report)
             return report
         semantic_pairs = select_review_pairs(semantic_pairs)
-        if len(semantic_pairs) > 24:
-            for candidate in passing:
-                if semantic_pass.get(candidate.candidate_id) == "reject":
-                    continue
-                self._store.set_candidate_outcome(
-                    candidate.candidate_id,
-                    CandidateState.OPERATIONALLY_UNRESOLVED,
-                    ("pair_overflow",),
-                )
-            self._store.set_run_state(run_id, "stopped", "pair_overflow")
-            report = self._report(run_id)
-            self._store.store_report(report)
-            return report
+        # Bound individual calls, not the whole batch. _invoke reserves every
+        # attempt against the campaign budget; unfinished dependencies alone
+        # become unresolved if that budget or a provider call fails.
         semantic_failure: ProviderFailure | None = None
         failed_semantic_candidate_ids: set[str] = set()
         if semantic_pairs:
@@ -1180,7 +1200,8 @@ class EnrichmentEngine:
         return tuple(self._store.candidate(candidate_id) for candidate_id in
                      self._store.request_data(run_id).get("comparison_candidate_ids", ()))
 
-    def _record_diversity_advice(self, run_id: str) -> None:
+    def _record_diversity_advice(self, run_id: str) -> ProviderFailure | None:
+        caught_failure: ProviderFailure | None = None
         levels = tuple(self._store.request_data(run_id)["levels"])
         candidates = self._comparison_candidates(run_id) + self._store.prior_staged_candidates(run_id) + tuple(
             item for item in self._store.candidates(run_id) if item.state == CandidateState.STAGED
@@ -1224,17 +1245,24 @@ class EnrichmentEngine:
                 raise ProviderFailure("malformed_dynamic_missions", ambiguous=False) from error
             evidence = {"status": "succeeded", "advice": advice, "local_statistics": canonical_data(local)}
         except ProviderFailure as failure:
+            caught_failure = failure
             evidence = {"status": "unavailable", "reason": failure.reason, "local_statistics": canonical_data(local)}
         self._store.add_evidence(run_id=run_id, candidate_id=None,
             evidence_type="gemini_diversity_advice", configuration_id=self._configuration.manifest_id,
             payload=evidence)
+        return caught_failure
 
     def _invoke(
         self, run_id: str, role: RoleConfiguration, payload: dict
     ) -> ProviderResult:
         models = (role.model,) + role.fallback_models
         for attempt, model in enumerate(models):
-            actual_role = role if attempt == 0 else replace(role, model=model, reported_model_identities=(model,))
+            actual_role = role if attempt == 0 else replace(
+                role,
+                model=model,
+                reservation_usd=self._configuration.reservation_for_model(role, model),
+                reported_model_identities=(model,),
+            )
             try:
                 return self._invoke_once(run_id, actual_role, payload, attempt=attempt)
             except ProviderFailure as failure:
@@ -1305,52 +1333,60 @@ class EnrichmentEngine:
             payload=payload,
             reservation_id=reservation_id,
         )
-        try:
-            result = self._provider.invoke(invocation)
-        except ProviderFailure as failure:
-            self._store.fail_invocation(
+        with self._observability.invocation(
+            invocation,
+            render_provider_request(invocation),
+            fallback_attempt=attempt,
+        ) as observation:
+            try:
+                result = self._provider.invoke(invocation)
+            except ProviderFailure as failure:
+                self._store.fail_invocation(
+                    reservation_id,
+                    invocation_id,
+                    error_code=failure.reason,
+                    ambiguous=failure.ambiguous,
+                )
+                raise
+            if result.reported_model not in role.reported_model_identities:
+                self._store.fail_invocation(
+                    reservation_id,
+                    invocation_id,
+                    error_code="unexpected_model_identity",
+                    ambiguous=True,
+                )
+                raise ProviderFailure("unexpected_model_identity", ambiguous=True)
+            try:
+                actual = self._actual_cost(role, result)
+            except ProviderFailure as failure:
+                self._store.fail_invocation(
+                    reservation_id,
+                    invocation_id,
+                    error_code=failure.reason,
+                    ambiguous=failure.ambiguous,
+                )
+                raise
+            if actual > role.reservation_usd:
+                self._store.fail_invocation(
+                    reservation_id,
+                    invocation_id,
+                    error_code="actual_cost_exceeded_reservation",
+                    ambiguous=True,
+                )
+                raise ProviderFailure(
+                    "actual_cost_exceeded_reservation", ambiguous=True
+                )
+            self._store.reconcile(
                 reservation_id,
                 invocation_id,
-                error_code=failure.reason,
-                ambiguous=failure.ambiguous,
+                actual_usd=actual,
+                output=dict(result.output),
+                usage=canonical_data(result.usage),
+                reported_model=result.reported_model,
+                response_id=result.response_id,
             )
-            raise
-        if result.reported_model not in role.reported_model_identities:
-            self._store.fail_invocation(
-                reservation_id,
-                invocation_id,
-                error_code="unexpected_model_identity",
-                ambiguous=True,
-            )
-            raise ProviderFailure("unexpected_model_identity", ambiguous=True)
-        try:
-            actual = self._actual_cost(role, result)
-        except ProviderFailure as failure:
-            self._store.fail_invocation(
-                reservation_id,
-                invocation_id,
-                error_code=failure.reason,
-                ambiguous=failure.ambiguous,
-            )
-            raise
-        if actual > role.reservation_usd:
-            self._store.fail_invocation(
-                reservation_id,
-                invocation_id,
-                error_code="actual_cost_exceeded_reservation",
-                ambiguous=True,
-            )
-            raise ProviderFailure("actual_cost_exceeded_reservation", ambiguous=True)
-        self._store.reconcile(
-            reservation_id,
-            invocation_id,
-            actual_usd=actual,
-            output=dict(result.output),
-            usage=canonical_data(result.usage),
-            reported_model=result.reported_model,
-            response_id=result.response_id,
-        )
-        return result
+            observation.success(result, actual_cost=actual)
+            return result
 
     def _actual_cost(self, role: RoleConfiguration, result: ProviderResult):
         usage = result.usage

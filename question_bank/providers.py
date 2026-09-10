@@ -12,10 +12,11 @@ from question_bank.missions import mission_schema
 
 
 class ProviderFailure(RuntimeError):
-    def __init__(self, reason: str, *, ambiguous: bool) -> None:
+    def __init__(self, reason: str, *, ambiguous: bool, detail: str = "") -> None:
         super().__init__(reason)
         self.reason = reason
         self.ambiguous = ambiguous
+        self.detail = detail
 
 
 class ProviderAdapter(Protocol):
@@ -99,13 +100,17 @@ def _integer(value) -> int:
 def _provider_failure(error: Exception) -> ProviderFailure:
     status = getattr(error, "status_code", None) or getattr(error, "code", None)
     if status == 503:
-        return ProviderFailure("provider_unavailable_503", ambiguous=True)
+        return ProviderFailure(
+            "provider_unavailable_503", ambiguous=True, detail=str(error)
+        )
     if status == 429:
-        return ProviderFailure("provider_rate_limited", ambiguous=False)
+        return ProviderFailure(
+            "provider_rate_limited", ambiguous=False, detail=str(error)
+        )
     definitive = isinstance(status, int) and 400 <= status < 500 and status != 408
     return ProviderFailure(
         f"provider_{'request_rejected' if definitive else 'transport_failure'}",
-        ambiguous=not definitive,
+        ambiguous=not definitive, detail=str(error),
     )
 
 
@@ -281,6 +286,58 @@ def _json_schema(role: str, payload: Mapping | None = None) -> dict:
     }
 
 
+def render_provider_request(invocation: ReservedInvocation) -> dict:
+    """Return the credential-free logical request passed to the provider SDK."""
+
+    role = invocation.role
+    if role.provider == "openai":
+        return {
+            "model": role.model,
+            "instructions": (
+                f"Execute the {role.role} role. Return only data matching the supplied schema. "
+                "Give concise decision labels and reason codes; never reveal private reasoning."
+            ),
+            "input": json.dumps(invocation.payload, sort_keys=True),
+            "reasoning": {"effort": role.reasoning},
+            "max_output_tokens": role.output_token_limit,
+            "text": {
+                "verbosity": "low",
+                "format": {
+                    "type": "json_schema",
+                    "name": role.schema_version.replace("-", "_"),
+                    "strict": True,
+                    "schema": _json_schema(role.role, invocation.payload),
+                },
+            },
+            "prompt_cache_key": invocation.idempotency_key[:64],
+            "store": False,
+        }
+    if role.provider == "gemini":
+        return {
+            "model": role.model,
+            "contents": json.dumps(invocation.payload, sort_keys=True),
+            "config": {
+                "system_instruction": (
+                    f"Execute only the {role.role} role and return schema-valid JSON. "
+                    "Do not include reasoning."
+                ),
+                "thinking_config": {"thinking_level": role.reasoning.upper()},
+                "max_output_tokens": (
+                    role.total_generated_token_limit or role.output_token_limit
+                ),
+                "response_mime_type": "application/json",
+                "response_json_schema": _json_schema(role.role, invocation.payload),
+            },
+        }
+    return {
+        "model": role.model,
+        "role": role.role,
+        "payload": invocation.payload,
+        "reasoning": role.reasoning,
+        "output_token_limit": role.output_token_limit,
+    }
+
+
 class NativeOpenAIAdapter:
     """One-attempt OpenAI Responses adapter with native usage reconciliation."""
 
@@ -294,29 +351,9 @@ class NativeOpenAIAdapter:
         self._client = client
 
     def invoke(self, invocation: ReservedInvocation) -> ProviderResult:
-        role = invocation.role
+        request = render_provider_request(invocation)
         try:
-            response = self._client.responses.create(
-                model=role.model,
-                instructions=(
-                    f"Execute the {role.role} role. Return only data matching the supplied schema. "
-                    "Give concise decision labels and reason codes; never reveal private reasoning."
-                ),
-                input=json.dumps(invocation.payload, sort_keys=True),
-                reasoning={"effort": role.reasoning},
-                max_output_tokens=role.output_token_limit,
-                text={
-                    "verbosity": "low",
-                    "format": {
-                        "type": "json_schema",
-                        "name": role.schema_version.replace("-", "_"),
-                        "strict": True,
-                        "schema": _json_schema(role.role, invocation.payload),
-                    }
-                },
-                prompt_cache_key=invocation.idempotency_key[:64],
-                store=False,
-            )
+            response = self._client.responses.create(**request)
         except Exception as error:  # provider SDK types are optional
             raise _provider_failure(error) from error
         usage = _object(response, "usage")
@@ -375,23 +412,9 @@ class NativeGeminiAdapter:
             and not self._allow_estimated_total_generated_cap
         ):
             raise ProviderFailure("hard_generated_token_cap_unavailable", ambiguous=False)
+        request = render_provider_request(invocation)
         try:
-            response = self._client.models.generate_content(
-                model=role.model,
-                contents=json.dumps(invocation.payload, sort_keys=True),
-                config={
-                    "system_instruction": (
-                        f"Execute only the {role.role} role and return schema-valid JSON. "
-                        "Do not include reasoning."
-                    ),
-                    "thinking_config": {"thinking_level": role.reasoning.upper()},
-                    "max_output_tokens": (
-                        role.total_generated_token_limit or role.output_token_limit
-                    ),
-                    "response_mime_type": "application/json",
-                    "response_json_schema": _json_schema(role.role, invocation.payload),
-                },
-            )
+            response = self._client.models.generate_content(**request)
         except Exception as error:
             raise _provider_failure(error) from error
         usage = _object(response, "usage_metadata")

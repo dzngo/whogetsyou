@@ -125,15 +125,15 @@ class ConfigurationManifest:
                 RoleConfiguration(
                     role=f"creative_{strategy}",
                     provider="gemini",
-                    model="gemini-3.5-flash",
+                    model="gemini-3.5-flash-lite",
                     reasoning="high",
                     input_token_limit=3000,
                     output_token_limit=1000,
                     total_generated_token_limit=3200,
-                    reservation_usd=money("0.033300"),
+                    reservation_usd=money("0.008900"),
                     prompt_version="creative-question-batch-v4-dynamic-missions",
                     schema_version="five-questions-v1",
-                    fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash"),
+                    fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
                 )
                 for strategy in (
                     "concrete_life_moments",
@@ -176,10 +176,10 @@ class ConfigurationManifest:
                 "semantic-pairs-v3",
             ),
             RoleConfiguration(
-                "observed_diversity", "gemini", "gemini-3.5-flash", "high",
-                6000, 2000, money("0.045000"), "observed-diversity-missions-v2",
+                "observed_diversity", "gemini", "gemini-3.5-flash-lite", "high",
+                6000, 2000, money("0.011800"), "observed-diversity-missions-v2",
                 "diversity-missions-v2", total_generated_token_limit=4000,
-                fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash"),
+                fallback_models=("gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.5-flash-lite"),
             ),
             RoleConfiguration(
                 "metadata_medium",
@@ -211,6 +211,7 @@ class ConfigurationManifest:
             for role in roles
         )
         prices = (
+            PriceEntry("gemini", "gemini-3.5-flash-lite", money("0.30"), money("0.03"), money("2.50"), "2026-12-31", "prices-2026-09-10"),
             PriceEntry("gemini", "gemini-3-flash-preview", money("0.50"), money("0.05"), money("3.00"), "2026-12-31", "prices-2026-09-04"),
             PriceEntry("gemini", "gemini-3.6-flash", money("0.75"), money("0.075"), money("3.75"), "2026-12-31", "prices-2026-09-04"),
             PriceEntry(
@@ -261,7 +262,7 @@ class ConfigurationManifest:
                 "strongest_neighbor_per_candidate": 1,
                 "lexical_alert_jaccard_gte": 0.40,
                 "lexical_alert_character_cosine_gte": 0.65,
-                "maximum_pairs": 24,
+                "total_pair_limit": "campaign_budget_and_attempt_limit",
                 "pairs_per_call": 6,
             },
         }
@@ -287,7 +288,7 @@ class ConfigurationManifest:
             "semantic_thresholds_hash": stable_hash(threshold_policy),
             "reference_fixture_hash": stable_hash(fixture_cases),
             "local_distance_authority": local_distance_authority,
-            "execution_version": "enrichment-engine-v2.10-single-level-campaigns",
+            "execution_version": "enrichment-engine-v2.12-flash-lite",
             "schema_version": SCHEMA_VERSION,
         }
         return cls(manifest_id=f"config-{stable_hash(payload)[:24]}", **payload)
@@ -316,11 +317,6 @@ class ConfigurationManifest:
             for model in role.fallback_models:
                 if role.provider != "gemini" or (role.provider, model) not in prices:
                     raise ValueError("fallback model is missing a Gemini price entry")
-                fallback_price = prices[(role.provider, model)]
-                fallback_bound = money((Decimal(role.input_token_limit) * fallback_price.uncached_input_per_million
-                    + Decimal(role.total_generated_token_limit or 0) * fallback_price.output_per_million) / Decimal(1_000_000))
-                if role.reservation_usd < fallback_bound:
-                    raise ValueError("fallback reservation is below its worst-case bound")
             price = prices.get((role.provider, role.model))
             if price is None:
                 raise ValueError(f"price catalog is missing {role.provider}/{role.model}")
@@ -347,6 +343,29 @@ class ConfigurationManifest:
         )
         if self.reference_fixture_hash != current_fixture_hash:
             raise ValueError("configuration manifest references a stale regression fixture")
+
+    def reservation_for_model(self, role: RoleConfiguration, model: str) -> Decimal:
+        """Return the list-price exposure for one bounded attempt on ``model``."""
+        price = next(
+            (entry for entry in self.prices if (entry.provider, entry.model) == (role.provider, model)),
+            None,
+        )
+        if price is None:
+            raise ValueError(f"price catalog is missing {role.provider}/{model}")
+        generated_limit = (
+            role.total_generated_token_limit
+            if role.provider == "gemini"
+            else role.output_token_limit
+        )
+        if generated_limit is None:
+            raise ValueError(f"{role.role} has no finite generated-token bound")
+        return money(
+            (
+                Decimal(role.input_token_limit) * price.uncached_input_per_million
+                + Decimal(generated_limit) * price.output_per_million
+            )
+            / Decimal(1_000_000)
+        )
 
     @property
     def creative_roles(self) -> tuple[RoleConfiguration, ...]:

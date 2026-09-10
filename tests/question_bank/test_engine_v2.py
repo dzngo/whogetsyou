@@ -106,7 +106,7 @@ class EnrichmentEngineCreativeTests(unittest.TestCase):
                         ]
                     },
                     usage=ProviderUsage(1000, 0, 100, 100, 1200),
-                    reported_model="gemini-3.5-flash",
+                    reported_model="gemini-3.5-flash-lite",
                     response_id=f"gemini-{role_index}",
                 )
             ]

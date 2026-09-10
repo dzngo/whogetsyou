@@ -22,6 +22,22 @@ from question_bank.store import V2Store
 
 
 class BudgetAndCacheTests(unittest.TestCase):
+    def test_gemini_roles_use_flash_lite_high_thinking_with_costed_reservations(self) -> None:
+        config = ConfigurationManifest.approved_defaults(
+            named_themes=(), aspects=(), perspectives=()
+        )
+
+        gemini_roles = tuple(role for role in config.roles if role.provider == "gemini")
+
+        self.assertEqual(5, len(gemini_roles))
+        self.assertTrue(all(role.model == "gemini-3.5-flash-lite" for role in gemini_roles))
+        self.assertTrue(all(role.reasoning == "high" for role in gemini_roles))
+        self.assertEqual(Decimal("0.008900"), config.creative_roles[0].reservation_usd)
+        self.assertEqual(
+            Decimal("0.011800"),
+            config.role("observed_diversity").reservation_usd,
+        )
+
     def test_large_campaign_scales_attempt_and_uncertainty_limits_explicitly(self) -> None:
         request = RunRequest.production_batch(
             idempotency_key="large-campaign",
@@ -147,7 +163,7 @@ class BudgetAndCacheTests(unittest.TestCase):
                 RunRequest.pilot(
                     idempotency_key="interrupted-resume",
                     snapshot_id=engine.empty_snapshot_id,
-                    authorization_usd=Decimal("0.23"),
+                    authorization_usd=Decimal("0.20"),
                 ),
             )
 
