@@ -159,8 +159,12 @@ from requiring the literal n8n `AI Agent` node type.
 7. **Assign themes and metadata**
 8. **Repair structured agent output**
 
-The repair role and budgeted provider routes are present in the draft. The paid
-qualification gate must verify the malformed-output branch before cutover; no
+The repair role is wired into both provider-attempt workflows. A parse or schema
+failure is preserved as `schema_failed`, then routed through a separately
+reserved same-provider repair invocation with an explicit trace relationship.
+Repair output is unwrapped back into the original role contract; a malformed
+Repair Agent response becomes operationally unresolved rather than recursing.
+The paid qualification gate must still exercise this branch before cutover; no
 hidden provider retry is permitted.
 
 One reusable Creative Agent subworkflow is called once for each of four
@@ -445,6 +449,10 @@ The provider is called only after reservation succeeds. Afterwards:
 Every attempt has an idempotent `attempt_id`. Native retry-on-fail is disabled
 for paid AI and embedding nodes because hidden retries would bypass reservation
 and tracing. Retry and fallback nodes are explicit in the canvas.
+When an already completed attempt is encountered after resume, the reservation
+contract returns its persisted structured result to the caller and does not
+invoke the provider again. Completed embedding attempts return neighbours from
+the stored candidate vector rather than purchasing another embedding.
 
 Budget exhaustion preserves all completed work and finishes the campaign as
 `budget_exhausted_partial`. It never deletes accepted questions or fabricates

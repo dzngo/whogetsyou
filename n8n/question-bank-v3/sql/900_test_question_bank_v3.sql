@@ -156,6 +156,27 @@ end;
 $$;
 
 do $$
+declare
+  v_reserved boolean;
+  v_reason text;
+  v_cached_result jsonb;
+begin
+  select reserved, reason, cached_result
+  into v_reserved, v_reason, v_cached_result
+  from qb3.reserve_provider_budget(
+    'attempt-1', 'budget-test', null, null, null,
+    'creative', 'gemini', 'test-model', 'high', 0.400000
+  );
+
+  assert not v_reserved and v_reason = 'idempotent_reconciled',
+    'a completed attempt must not call the provider again';
+  assert v_cached_result ->> 'status' = 'succeeded'
+      and v_cached_result -> 'structured_response' = '{"questions":[]}'::jsonb,
+    'a completed attempt must return its cached agent result to the resumed workflow';
+end;
+$$;
+
+do $$
 begin
   assert (
     select spent_usd = 0.250000 and reserved_usd = 0
@@ -383,6 +404,44 @@ insert into qb3.candidates (
 select * from qb3.store_candidate_embedding_and_find(
   :'candidate_three_id', array_fill(0.03::real, array[1536])::vector
 );
+
+insert into qb3.provider_attempts (
+  attempt_id, campaign_id, batch_id, candidate_id, agent_role, provider,
+  requested_model, reported_model, reasoning_setting, reservation_usd,
+  actual_cost_usd, status, usage, completed_at
+) values (
+  'embedding-attempt-complete', 'admission-test', :'test_batch_id',
+  :'candidate_three_id', 'embedding', 'openai', 'text-embedding-3-small',
+  'text-embedding-3-small', 'none', 0.001000, 0.000001, 'reconciled',
+  '{"total_tokens":5}'::jsonb, now()
+);
+
+do $$
+declare
+  v_reserved boolean;
+  v_reason text;
+  v_cached_result jsonb;
+begin
+  select reserved, reason, cached_result
+  into v_reserved, v_reason, v_cached_result
+  from qb3.reserve_provider_budget(
+    'embedding-attempt-complete', 'admission-test',
+    (select batch_id from qb3.batches where campaign_id = 'admission-test' and batch_index = 1),
+    (select candidate_id from qb3.candidates where campaign_id = 'admission-test' and candidate_index = 3),
+    null, 'embedding', 'openai',
+    'text-embedding-3-small', 'none', 0.001000
+  );
+
+  assert not v_reserved and v_reason = 'idempotent_reconciled',
+    'a completed embedding attempt must not call the provider again';
+  assert v_cached_result ->> 'candidate_id' = (
+        select candidate_id::text from qb3.candidates
+        where campaign_id = 'admission-test' and candidate_index = 3
+      )
+      and jsonb_typeof(v_cached_result -> 'neighbours') = 'array',
+    'a completed embedding attempt must return cached neighbours on resume';
+end;
+$$;
 
 do $$
 begin

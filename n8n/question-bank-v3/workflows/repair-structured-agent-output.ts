@@ -8,6 +8,7 @@ const input = trigger({
     { name: 'attempt_id', type: 'string' }, { name: 'invocation_id', type: 'string' },
     { name: 'context', type: 'object' },
     { name: 'provider_family', type: 'string' },
+    { name: 'repair_of_invocation_id', type: 'string' },
   ] } } },
 });
 
@@ -45,6 +46,7 @@ const gemini = node({
       model_waterfall: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini'); return typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; })() }}"),
       reasoning_setting: 'low',
       reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini').reservationUsd }}"),
+      repair_of_invocation_id: expr("{{ $('Agent input').item.json.repair_of_invocation_id }}"),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -57,7 +59,8 @@ const gemini = node({
       { id: 'context', displayName: 'context', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'model_waterfall', displayName: 'model_waterfall', type: 'array', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
-      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
+      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true }
   } },
 });
@@ -78,6 +81,7 @@ const openai = node({
       model_waterfall: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai'); return typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; })() }}"),
       reasoning_setting: 'low',
       reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai').reservationUsd }}"),
+      repair_of_invocation_id: expr("{{ $('Agent input').item.json.repair_of_invocation_id }}"),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -90,10 +94,34 @@ const openai = node({
       { id: 'context', displayName: 'context', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'model_waterfall', displayName: 'model_waterfall', type: 'array', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
-      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
+      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true }
   } },
 });
 
+const returnGeminiRepair = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return Gemini repair result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.repairable === true ? 'succeeded' : 'operationally_unresolved' }}"), type: 'string' },
+    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.repaired_output || {} }}"), type: 'object' },
+    { id: 'invocation-id', name: 'invocation_id', value: expr("{{ $('Repair output — Gemini low').item.json.invocation_id || '' }}"), type: 'string' },
+    { id: 'reason', name: 'reason', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.error || '' }}"), type: 'string' },
+  ] } } },
+});
+
+const returnOpenAIRepair = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return OpenAI repair result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.repairable === true ? 'succeeded' : 'operationally_unresolved' }}"), type: 'string' },
+    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.repaired_output || {} }}"), type: 'object' },
+    { id: 'invocation-id', name: 'invocation_id', value: expr("{{ $('Repair output — OpenAI low').item.json.invocation_id || '' }}"), type: 'string' },
+    { id: 'reason', name: 'reason', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.error || '' }}"), type: 'string' },
+  ] } } },
+});
+
 export default workflow('qb3-repair-structured-output', 'Repair structured agent output')
-  .add(input).to(loadPrompt).to(route.onCase(0, gemini).onCase(1, openai));
+  .add(input).to(loadPrompt).to(route
+    .onCase(0, gemini.to(returnGeminiRepair))
+    .onCase(1, openai.to(returnOpenAIRepair))
+  );

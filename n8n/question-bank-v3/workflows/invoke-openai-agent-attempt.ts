@@ -12,6 +12,7 @@ const input = trigger({
     { name: 'model_id', type: 'string' }, { name: 'reasoning_setting', type: 'string' },
     { name: 'reservation_usd', type: 'number' },
     { name: 'input_cost_per_million_usd', type: 'number' }, { name: 'output_cost_per_million_usd', type: 'number' },
+    { name: 'repair_of_invocation_id', type: 'string' },
   ] } } },
 });
 
@@ -42,7 +43,7 @@ const reserve = node({
 
 const reserved = ifElse({ version: 2.3, config: { name: 'Reservation succeeded?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr('{{ $json.reserved }}'), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+    { leftValue: expr("{{ $('Reserve this OpenAI attempt').item.json.reserved }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ] },
 } } });
 
@@ -62,13 +63,13 @@ const openai = node({
 
 const succeeded = ifElse({ version: 2.3, config: { name: 'OpenAI returned output?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ String($json.output?.length || $json.output_text?.length || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+    { leftValue: expr("{{ String($('OpenAI role agent — paid').item.json.output?.length || $('OpenAI role agent — paid').item.json.output_text?.length || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
   ] },
 } } });
 
 const hasStatus = ifElse({ version: 2.3, config: { name: 'Provider returned HTTP status?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ String($json.statusCode || $json.httpCode || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+    { leftValue: expr("{{ String($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
   ] },
 } } });
 
@@ -90,6 +91,55 @@ const reconcile = node({
   } },
 });
 
+const parseAndValidate = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Parse and validate structured output', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'parse-result', name: 'parse_result', type: 'object', value: expr(`{{ (() => {
+      const response = $('OpenAI role agent — paid').item.json;
+      const raw = response.output_text || response.output?.flatMap(item => item.content || []).find(content => content.type === 'output_text')?.text || '';
+      try {
+        const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const schema = $('Agent input').item.json.output_schema || {};
+        const valid = (candidate, rule) => {
+          if (!rule || typeof rule !== 'object') return true;
+          const types = rule.type ? (Array.isArray(rule.type) ? rule.type : [rule.type]) : [];
+          const matchesType = type => type === 'null' ? candidate === null
+            : type === 'object' ? candidate !== null && !Array.isArray(candidate) && typeof candidate === 'object'
+            : type === 'array' ? Array.isArray(candidate)
+            : type === 'integer' ? Number.isInteger(candidate)
+            : type === 'number' ? typeof candidate === 'number' && Number.isFinite(candidate)
+            : typeof candidate === type;
+          if (types.length && !types.some(matchesType)) return false;
+          if (rule.enum && !rule.enum.includes(candidate)) return false;
+          if (candidate === null) return true;
+          if (Array.isArray(candidate) && rule.minItems !== undefined && candidate.length < rule.minItems) return false;
+          if (Array.isArray(candidate) && rule.maxItems !== undefined && candidate.length > rule.maxItems) return false;
+          if (typeof candidate === 'string' && rule.minLength !== undefined && candidate.length < rule.minLength) return false;
+          if (typeof candidate === 'string' && rule.maxLength !== undefined && candidate.length > rule.maxLength) return false;
+          if (typeof candidate === 'number' && rule.minimum !== undefined && candidate < rule.minimum) return false;
+          if (typeof candidate === 'number' && rule.maximum !== undefined && candidate > rule.maximum) return false;
+          if (rule.required?.some(key => !(key in candidate))) return false;
+          if (rule.additionalProperties === false && rule.properties && Object.keys(candidate).some(key => !(key in rule.properties))) return false;
+          if (rule.properties && !Object.entries(rule.properties).every(([key, child]) => !(key in candidate) || valid(candidate[key], child))) return false;
+          if (rule.items && Array.isArray(candidate) && !candidate.every(item => valid(item, rule.items))) return false;
+          return true;
+        };
+        return valid(value, schema)
+          ? { ok: true, value, raw_text: typeof raw === 'string' ? raw : JSON.stringify(raw), error: '' }
+          : { ok: false, value: {}, raw_text: typeof raw === 'string' ? raw : JSON.stringify(raw), error: 'json_schema_mismatch' };
+      } catch (error) {
+        return { ok: false, value: {}, raw_text: typeof raw === 'string' ? raw : JSON.stringify(raw), error: String(error?.message || error) };
+      }
+    })() }}`) },
+  ] } } },
+});
+
+const schemaValid = ifElse({ version: 2.3, config: { name: 'Structured output matches schema?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr("{{ $('Parse and validate structured output').item.json.parse_result.ok }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+  ],
+} } } });
+
 const persist = node({
   type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
   config: { name: 'Persist prompt and output', parameters: {
@@ -101,8 +151,8 @@ const persist = node({
       agent_role: expr("{{ $('Agent input').item.json.agent_role }}"), prompt_key: expr("{{ $('Agent input').item.json.prompt_key }}"),
       prompt_version: expr("{{ $('Agent input').item.json.prompt_version }}"), rendered_prompt: expr("{{ $('Agent input').item.json.rendered_prompt }}"),
       raw_response: expr("{{ JSON.stringify($('OpenAI role agent — paid').item.json) }}"),
-      structured_response: expr("{{ (() => { const r = $('OpenAI role agent — paid').item.json; const t = r.output_text || r.output?.flatMap(o => o.content || []).find(c => c.type === 'output_text')?.text || '{}'; return typeof t === 'string' ? JSON.parse(t) : t; })() }}"),
-      status: 'succeeded', repair_of_invocation_id: '',
+      structured_response: expr("{{ $('Parse and validate structured output').item.json.parse_result.value }}"),
+      status: 'succeeded', repair_of_invocation_id: expr("{{ $('Agent input').item.json.repair_of_invocation_id || '' }}"),
     }, matchingColumns: [], schema: [
       { id: 'invocation_id', displayName: 'invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -120,6 +170,85 @@ const persist = node({
       { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
+});
+
+const persistSchemaFailure = node({
+  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
+  config: { name: 'Persist schema failure', parameters: {
+    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 't7YcO0u9cCMxETbS' },
+    workflowInputs: { mappingMode: 'defineBelow', value: {
+      invocation_id: expr("{{ $('Agent input').item.json.invocation_id }}"), attempt_id: expr("{{ $('Agent input').item.json.attempt_id }}"),
+      campaign_id: expr("{{ $('Agent input').item.json.campaign_id }}"), batch_id: expr("{{ $('Agent input').item.json.batch_id || '' }}"),
+      candidate_id: expr("{{ $('Agent input').item.json.candidate_id || '' }}"), mission_id: expr("{{ $('Agent input').item.json.mission_id || '' }}"),
+      agent_role: expr("{{ $('Agent input').item.json.agent_role }}"), prompt_key: expr("{{ $('Agent input').item.json.prompt_key }}"),
+      prompt_version: expr("{{ $('Agent input').item.json.prompt_version }}"), rendered_prompt: expr("{{ $('Agent input').item.json.rendered_prompt }}"),
+      raw_response: expr("{{ JSON.stringify($('OpenAI role agent — paid').item.json) }}"), structured_response: {},
+      status: 'schema_failed', repair_of_invocation_id: expr("{{ $('Agent input').item.json.repair_of_invocation_id || '' }}"),
+    }, matchingColumns: [], schema: [
+      { id: 'invocation_id', displayName: 'invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'candidate_id', displayName: 'candidate_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'mission_id', displayName: 'mission_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'agent_role', displayName: 'agent_role', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'prompt_key', displayName: 'prompt_key', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'prompt_version', displayName: 'prompt_version', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'rendered_prompt', displayName: 'rendered_prompt', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'raw_response', displayName: 'raw_response', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'structured_response', displayName: 'structured_response', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'status', displayName: 'status', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+    ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
+  } },
+});
+
+const mayRepair = ifElse({ version: 2.3, config: { name: 'Is this an original agent invocation?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr("{{ $('Agent input').item.json.agent_role }}"), rightValue: 'structured_output_repair', operator: { type: 'string', operation: 'notEquals' } },
+  ],
+} } } });
+
+const repair = node({
+  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
+  config: { name: 'Repair malformed OpenAI output', parameters: {
+    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: '2urITibrmjZ4fQwh' },
+    workflowInputs: { mappingMode: 'defineBelow', value: {
+      campaign_id: expr("{{ $('Agent input').item.json.campaign_id }}"), batch_id: expr("{{ $('Agent input').item.json.batch_id || '' }}"),
+      candidate_id: expr("{{ $('Agent input').item.json.candidate_id || '' }}"), mission_id: expr("{{ $('Agent input').item.json.mission_id || '' }}"),
+      attempt_id: expr("{{ $('Agent input').item.json.attempt_id + '-repair' }}"), invocation_id: expr("{{ $('Agent input').item.json.invocation_id + '-repair' }}"),
+      context: expr("{{ { malformed_response: $('Parse and validate structured output').item.json.parse_result.raw_text, required_schema: $('Agent input').item.json.output_schema, parse_error: $('Parse and validate structured output').item.json.parse_result.error } }}"),
+      provider_family: 'openai', repair_of_invocation_id: expr("{{ $('Agent input').item.json.invocation_id }}"),
+    }, matchingColumns: [], schema: [
+      { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'candidate_id', displayName: 'candidate_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'mission_id', displayName: 'mission_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'invocation_id', displayName: 'invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'context', displayName: 'context', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'provider_family', displayName: 'provider_family', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+    ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
+  } },
+});
+
+const returnRepaired = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return repaired structured output', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: expr("{{ $('Repair malformed OpenAI output').item.json.status || 'operationally_unresolved' }}"), type: 'string' },
+    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair malformed OpenAI output').item.json.structured_response || {} }}"), type: 'object' },
+    { id: 'repair-invocation-id', name: 'repair_invocation_id', value: expr("{{ $('Repair malformed OpenAI output').item.json.invocation_id || '' }}"), type: 'string' },
+  ] } } },
+});
+
+const repairFailed = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return unrepairable schema failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: 'operationally_unresolved', type: 'string' },
+    { id: 'reason', name: 'reason', value: 'structured_output_repair_failed', type: 'string' },
+    { id: 'attempt-id', name: 'attempt_id', value: expr("{{ $('Agent input').item.json.attempt_id }}"), type: 'string' },
+  ] } } },
 });
 
 const release = node({
@@ -161,6 +290,12 @@ const unknown = node({
 export default workflow('qb3-invoke-openai-attempt', 'Invoke OpenAI agent attempt')
   .add(input).to(reserve).to(reserved.onTrue(
     openai.to(succeeded
-      .onTrue(reconcile.to(persist))
+      .onTrue(reconcile.to(parseAndValidate).to(schemaValid
+        .onTrue(persist)
+        .onFalse(persistSchemaFailure.to(mayRepair
+          .onTrue(repair.to(returnRepaired))
+          .onFalse(repairFailed)
+        ))
+      ))
       .onFalse(hasStatus.onTrue(release.to(retrySignal)).onFalse(unknown)))
   ));

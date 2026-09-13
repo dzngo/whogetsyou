@@ -153,3 +153,12 @@ The current implementation has completed validation and saved-connection
 inspection. Credential binding, pinned non-paid execution tests, shared error
 handler publication/attachment, and the paid qualification gate remain operator
 steps because they depend on secrets or incur provider cost.
+
+Completed provider attempts are resume-safe: the budget reservation contract
+returns the persisted `agent_runs` result instead of calling the provider again.
+Completed embedding attempts similarly return the stored candidate vector's
+current top-ten neighbours without purchasing a second embedding.
+Malformed JSON or schema-mismatched output is persisted as `schema_failed`, then
+sent to the same-provider Repair Agent under a separate reservation and linked
+trace. A malformed Repair Agent response terminates as operationally unresolved
+instead of recursing.

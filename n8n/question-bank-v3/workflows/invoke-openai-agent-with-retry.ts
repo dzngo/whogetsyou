@@ -9,6 +9,7 @@ const input = trigger({
     { name: 'agent_role', type: 'string' }, { name: 'prompt_key', type: 'string' },
     { name: 'context', type: 'object' }, { name: 'model_waterfall', type: 'array' },
     { name: 'reasoning_setting', type: 'string' }, { name: 'reservation_usd', type: 'number' },
+    { name: 'repair_of_invocation_id', type: 'string' },
   ] } } },
 });
 
@@ -26,7 +27,7 @@ const loadPrompt = node({
 const primary = node({
   type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
   config: { name: 'Primary OpenAI attempt', parameters: {
-    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'WlfGkDiHeUBy63tW' },
+    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'p6V8CLoucC9GvQCd' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
       attempt_id: expr("{{ $('OpenAI role input').item.json.base_attempt_id + '-o1' }}"),
       parent_attempt_id: '',
@@ -45,6 +46,7 @@ const primary = node({
       reservation_usd: expr("{{ $('OpenAI role input').item.json.reservation_usd }}"),
       input_cost_per_million_usd: expr("{{ $('OpenAI role input').item.json.model_waterfall[0].inputCostPerMillionUsd }}"),
       output_cost_per_million_usd: expr("{{ $('OpenAI role input').item.json.model_waterfall[0].outputCostPerMillionUsd }}"),
+      repair_of_invocation_id: expr("{{ $('OpenAI role input').item.json.repair_of_invocation_id || '' }}"),
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'parent_attempt_id', displayName: 'parent_attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -62,19 +64,20 @@ const primary = node({
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'input_cost_per_million_usd', displayName: 'input_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
-      { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
+      { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
 });
 const primaryFailed = ifElse({ version: 2.3, config: { name: 'Primary returned a definite retryable failure?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Primary OpenAI attempt').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
   ],
 } } } });
 const retry = node({
   type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
   config: { name: 'Explicit same-model OpenAI retry', parameters: {
-    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'WlfGkDiHeUBy63tW' },
+    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'p6V8CLoucC9GvQCd' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
       attempt_id: expr("{{ $('OpenAI role input').item.json.base_attempt_id + '-o2' }}"),
       parent_attempt_id: expr("{{ $('OpenAI role input').item.json.base_attempt_id + '-o1' }}"),
@@ -93,6 +96,7 @@ const retry = node({
       reservation_usd: expr("{{ $('OpenAI role input').item.json.reservation_usd }}"),
       input_cost_per_million_usd: expr("{{ $('OpenAI role input').item.json.model_waterfall[0].inputCostPerMillionUsd }}"),
       output_cost_per_million_usd: expr("{{ $('OpenAI role input').item.json.model_waterfall[0].outputCostPerMillionUsd }}"),
+      repair_of_invocation_id: expr("{{ $('OpenAI role input').item.json.repair_of_invocation_id || '' }}"),
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'parent_attempt_id', displayName: 'parent_attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -110,13 +114,14 @@ const retry = node({
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'input_cost_per_million_usd', displayName: 'input_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
-      { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
+      { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
 });
 const retryFailed = ifElse({ version: 2.3, config: { name: 'Retry failed definitely?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Explicit same-model OpenAI retry').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
   ],
 } } } });
 const unresolved = node({

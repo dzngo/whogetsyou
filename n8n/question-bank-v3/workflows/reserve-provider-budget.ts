@@ -51,7 +51,7 @@ const reserve = node({
       },
     },
     credentials: { postgres: newCredential('Question Bank v3 Postgres') },
-    output: [{ reserved: true, reason: 'reserved', remaining_usd: '5.990000' }],
+    output: [{ reserved: true, reason: 'reserved', remaining_usd: '5.990000', cached_result: null }],
   },
 });
 
@@ -68,10 +68,18 @@ const result = node({
           { id: 'reserved', name: 'reserved', value: expr("{{ $('Reserve in PostgreSQL').item.json.reserved }}"), type: 'boolean' },
           { id: 'reason', name: 'reason', value: expr("{{ $('Reserve in PostgreSQL').item.json.reason }}"), type: 'string' },
           { id: 'remaining-usd', name: 'remaining_usd', value: expr("{{ $('Reserve in PostgreSQL').item.json.remaining_usd }}"), type: 'string' },
+          { id: 'invocation-id', name: 'invocation_id', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.invocation_id || '' }}"), type: 'string' },
+          { id: 'attempt-id', name: 'attempt_id', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.attempt_id || $('Input').item.json.attempt_id }}"), type: 'string' },
+          { id: 'status', name: 'status', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.status || '' }}"), type: 'string' },
+          { id: 'raw-response', name: 'raw_response', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.raw_response || '' }}"), type: 'string' },
+          { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.structured_response || {} }}"), type: 'object' },
+          { id: 'repair-of-invocation-id', name: 'repair_of_invocation_id', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.repair_of_invocation_id || '' }}"), type: 'string' },
+          { id: 'candidate-id', name: 'candidate_id', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.candidate_id || $('Input').item.json.candidate_id || '' }}"), type: 'string' },
+          { id: 'neighbours', name: 'neighbours', value: expr("{{ $('Reserve in PostgreSQL').item.json.cached_result?.neighbours || [] }}"), type: 'array' },
         ],
       },
     },
-    output: [{ reserved: true, reason: 'reserved', remaining_usd: '5.990000' }],
+    output: [{ reserved: true, reason: 'reserved', remaining_usd: '5.990000', invocation_id: '', attempt_id: 'campaign:1:creative:1', status: '', raw_response: '', structured_response: {}, repair_of_invocation_id: '', candidate_id: '', neighbours: [] }],
   },
 });
 

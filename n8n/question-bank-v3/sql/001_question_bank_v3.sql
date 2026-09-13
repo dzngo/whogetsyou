@@ -676,12 +676,18 @@ create or replace function qb3.reserve_provider_budget(
   p_reasoning_setting text,
   p_reservation_usd numeric
 )
-returns table (reserved boolean, reason text, remaining_usd numeric)
+returns table (
+  reserved boolean,
+  reason text,
+  remaining_usd numeric,
+  cached_result jsonb
+)
 language plpgsql
 as $$
 declare
   v_campaign qb3.campaigns%rowtype;
   v_attempt qb3.provider_attempts%rowtype;
+  v_cached_result jsonb;
 begin
   if p_reservation_usd <= 0 then
     raise exception 'reservation must be positive';
@@ -707,13 +713,49 @@ begin
       or v_attempt.requested_model <> p_requested_model then
       raise exception 'attempt id % reused with different parameters', p_attempt_id;
     end if;
+    select jsonb_build_object(
+      'invocation_id', a.invocation_id,
+      'attempt_id', a.attempt_id,
+      'structured_response', a.structured_response,
+      'raw_response', a.raw_response,
+      'status', a.status,
+      'repair_of_invocation_id', a.repair_of_invocation_id
+    )
+    into v_cached_result
+    from qb3.agent_runs a
+    where a.attempt_id = p_attempt_id;
+
+    if v_cached_result is null
+       and v_attempt.agent_role = 'embedding'
+       and v_attempt.status = 'reconciled' then
+      select jsonb_build_object(
+        'status', 'succeeded',
+        'candidate_id', c.candidate_id,
+        'neighbours', coalesce((
+          select jsonb_agg(to_jsonb(n) order by n.cosine_distance)
+          from (
+            select q.question_id, q.question_text, q.level,
+                   (q.embedding <=> c.embedding)::double precision as cosine_distance
+            from qb3.questions q
+            order by q.embedding <=> c.embedding
+            limit 10
+          ) n
+        ), '[]'::jsonb)
+      )
+      into v_cached_result
+      from qb3.candidates c
+      where c.candidate_id = v_attempt.candidate_id
+        and c.embedding is not null;
+    end if;
+
     return query select
-      v_attempt.status = 'reserved',
+      v_attempt.status = 'reserved' and v_cached_result is null,
       'idempotent_' || v_attempt.status,
       v_campaign.authorized_budget_usd
         - v_campaign.spent_usd
         - v_campaign.reserved_usd
-        - v_campaign.unknown_spend_usd;
+        - v_campaign.unknown_spend_usd,
+      v_cached_result;
     return;
   end if;
 
@@ -722,7 +764,8 @@ begin
       v_campaign.authorized_budget_usd
         - v_campaign.spent_usd
         - v_campaign.reserved_usd
-        - v_campaign.unknown_spend_usd;
+        - v_campaign.unknown_spend_usd,
+      null::jsonb;
     return;
   end if;
 
@@ -738,7 +781,8 @@ begin
       v_campaign.authorized_budget_usd
         - v_campaign.spent_usd
         - v_campaign.reserved_usd
-        - v_campaign.unknown_spend_usd;
+        - v_campaign.unknown_spend_usd,
+      null::jsonb;
     return;
   end if;
 
@@ -761,7 +805,8 @@ begin
       - v_campaign.spent_usd
       - v_campaign.reserved_usd
       - v_campaign.unknown_spend_usd
-      - p_reservation_usd;
+      - p_reservation_usd,
+    null::jsonb;
 end;
 $$;
 
