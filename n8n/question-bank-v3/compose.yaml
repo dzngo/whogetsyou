@@ -1,0 +1,21 @@
+services:
+  question-bank-postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${QB3_POSTGRES_DB:-question_bank_v3}
+      POSTGRES_USER: ${QB3_POSTGRES_USER:-question_bank_v3}
+      POSTGRES_PASSWORD: ${QB3_POSTGRES_PASSWORD:?Set QB3_POSTGRES_PASSWORD}
+    ports:
+      - "${QB3_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - question-bank-v3-postgres:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  question-bank-v3-postgres:

@@ -103,7 +103,16 @@ Phases:
 
 ## 3. Offline Question Bank Enrichment
 
-The `question_bank` package is the offline multi-agent system that builds the future Question Bank. It does not alter live gameplay generation or question sampling. Google ADK 2 is the production orchestrator for every new campaign; ADK Web and the CLI load the same explicit graph and native provider boundary.
+> **Question Bank v3 is moving to n8n.** The implementation starts with an
+> empty PostgreSQL/pgvector bank and uses n8n as both the visible orchestrator
+> and day-to-day prompt/input/output inspector. See the
+> [approved v3 migration plan](docs/n8n-question-bank-v3-migration-plan.md) and
+> [local implementation guide](n8n/question-bank-v3/README.md). The ADK,
+> Phoenix, SQLite, and v2/v2.1 instructions below describe the legacy system and
+> remain available only until the v3 qualification gate passes; they are not the
+> target path for new v3 campaigns.
+
+The legacy `question_bank` package remains available for the existing v2/v2.1 banks. It does not alter live gameplay generation or question sampling. New Question Bank v3 campaigns are being cut over to the n8n-native implementation described above; Google ADK and Phoenix remain the legacy production path only until the n8n credential, non-paid test, and paid qualification gates pass.
 
 ### 3.1 Multi-agent architecture
 
