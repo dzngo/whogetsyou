@@ -28,15 +28,32 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_rejected boolean := false;
+begin
+  begin
+    perform * from qb3.create_campaign(
+      'odd-mixed-test', 'Odd mixed test', '{}'::jsonb,
+      'mixed', 5, 2.000000,
+      (select prompt_snapshot_id from qb3.prompt_snapshots where configuration_hash = 'test-configuration'),
+      12, null
+    );
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'mixed campaigns must reject odd targets rather than silently skewing the split';
+end;
+$$;
+
 select * from qb3.create_campaign(
   'control-test', 'Control test', '{"source":"sql-test"}'::jsonb,
-  'mixed', 5, 2.000000, :'test_prompt_snapshot_id', 12, 'test notes'
+  'mixed', 6, 2.000000, :'test_prompt_snapshot_id', 12, 'test notes'
 );
 
 do $$
 begin
   assert (
-    select shallow_target = 2 and deep_target = 3 and status = 'running'
+    select shallow_target = 3 and deep_target = 3 and status = 'running'
     from qb3.campaigns where campaign_id = 'control-test'
   ), 'mixed campaign target must split deterministically';
 end;
@@ -118,20 +135,119 @@ begin
 
   select reserved, reason into v_reserved, v_reason
   from qb3.reserve_provider_budget(
-    'attempt-1', 'budget-test', null, null, null,
-    'creative', 'gemini', 'test-model', 'high', 0.400000
-  );
-  assert v_reserved and v_reason = 'idempotent_reserved', 'reservation must be idempotent';
-
-  select reserved, reason into v_reserved, v_reason
-  from qb3.reserve_provider_budget(
     'attempt-too-large', 'budget-test', null, null, null,
     'creative', 'gemini', 'test-model', 'high', 0.700000
   );
   assert not v_reserved and v_reason = 'insufficient_budget', 'hard cap must reject';
 
   assert (select reserved_usd = 0.400000 from qb3.campaigns where campaign_id = 'budget-test'),
-    'idempotent reservation must not reserve twice';
+    'a reservation must be charged to the campaign exactly once';
+end;
+$$;
+
+insert into qb3.campaigns (
+  campaign_id, campaign_name, raw_input, level_mode, accepted_target,
+  shallow_target, deep_target, authorized_budget_usd,
+  prompt_snapshot_id, emergency_batch_ceiling
+) values (
+  'ambiguous-resume-test', 'Ambiguous resume test', '{}'::jsonb,
+  'shallow', 1, 1, 0, 1.000000,
+  :'test_prompt_snapshot_id', 2
+);
+
+select * from qb3.reserve_provider_budget(
+  'ambiguous-attempt', 'ambiguous-resume-test', null, null, null,
+  'creative', 'gemini', 'test-model', 'high', 0.400000
+);
+
+do $$
+declare
+  v_reserved boolean;
+  v_reason text;
+  v_cached_result jsonb;
+begin
+  select reserved, reason, cached_result
+  into v_reserved, v_reason, v_cached_result
+  from qb3.reserve_provider_budget(
+    'ambiguous-attempt', 'ambiguous-resume-test', null, null, null,
+    'creative', 'gemini', 'test-model', 'high', 0.400000
+  );
+
+  assert not v_reserved and v_reason = 'attempt_in_flight',
+    'a duplicate request inside the active lease must not replay or abandon the provider call';
+  assert v_cached_result ->> 'status' = 'in_flight'
+      and v_cached_result #>> '{structured_response,reason}' = 'provider_attempt_lease_active',
+    'an active lease must return a durable in-flight result';
+  assert (
+    select reserved_usd = 0.400000
+      and unknown_spend_usd = 0
+      and status = 'running'
+    from qb3.campaigns where campaign_id = 'ambiguous-resume-test'
+  ), 'an active lease must preserve the original reservation and running campaign';
+
+  update qb3.provider_attempts
+  set lease_expires_at = now() - interval '1 second'
+  where attempt_id = 'ambiguous-attempt';
+
+  select reserved, reason, cached_result
+  into v_reserved, v_reason, v_cached_result
+  from qb3.reserve_provider_budget(
+    'ambiguous-attempt', 'ambiguous-resume-test', null, null, null,
+    'creative', 'gemini', 'test-model', 'high', 0.400000
+  );
+
+  assert not v_reserved and v_reason = 'idempotent_unknown_spend',
+    'an expired ambiguous attempt must never be automatically purchased again';
+  assert v_cached_result ->> 'status' = 'unknown_spend'
+      and v_cached_result #>> '{structured_response,reason}' = 'recovered_reserved_attempt',
+    'expired recovery must return a durable, inspectable failure result';
+  assert (
+    select reserved_usd = 0
+      and unknown_spend_usd = 0.400000
+      and status = 'unknown_spend'
+    from qb3.campaigns where campaign_id = 'ambiguous-resume-test'
+  ), 'expired recovery must conservatively stop the campaign and preserve the reservation as unknown spend';
+end;
+$$;
+
+do $$
+declare
+  v_rejected boolean;
+begin
+  v_rejected := false;
+  begin
+    perform * from qb3.reserve_provider_budget('attempt-1', 'budget-test', null, null, null, 'creative', 'openai', 'test-model', 'high', 0.400000);
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'attempt id reuse must reject a changed provider';
+
+  v_rejected := false;
+  begin
+    perform * from qb3.reserve_provider_budget('attempt-1', 'budget-test', null, null, null, 'creative', 'gemini', 'test-model', 'low', 0.400000);
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'attempt id reuse must reject changed reasoning';
+
+  v_rejected := false;
+  begin
+    perform * from qb3.reserve_provider_budget('attempt-1', 'budget-test', gen_random_uuid(), null, null, 'creative', 'gemini', 'test-model', 'high', 0.400000);
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'attempt id reuse must reject a changed batch';
+
+  v_rejected := false;
+  begin
+    perform * from qb3.reserve_provider_budget('attempt-1', 'budget-test', null, gen_random_uuid(), null, 'creative', 'gemini', 'test-model', 'high', 0.400000);
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'attempt id reuse must reject a changed candidate';
+
+  v_rejected := false;
+  begin
+    perform * from qb3.reserve_provider_budget('attempt-1', 'budget-test', null, null, 'parent-attempt', 'creative', 'gemini', 'test-model', 'high', 0.400000);
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'attempt id reuse must reject a changed parent';
 end;
 $$;
 
@@ -173,6 +289,54 @@ begin
   assert v_cached_result ->> 'status' = 'succeeded'
       and v_cached_result -> 'structured_response' = '{"questions":[]}'::jsonb,
     'a completed attempt must return its cached agent result to the resumed workflow';
+end;
+$$;
+
+insert into qb3.provider_attempts (
+  attempt_id, campaign_id, agent_role, provider, requested_model,
+  reasoning_setting, reservation_usd, actual_cost_usd, status, completed_at
+) values
+  ('repair-base-attempt', 'budget-test', 'semantic', 'openai', 'test-model',
+   'high', 0.010000, 0.001000, 'reconciled', now()),
+  ('repair-child-attempt', 'budget-test', 'structured_output_repair', 'openai', 'test-model',
+   'low', 0.010000, 0.001000, 'reconciled', now());
+
+update qb3.provider_attempts
+set parent_attempt_id = 'repair-base-attempt'
+where attempt_id = 'repair-child-attempt';
+
+insert into qb3.agent_runs (
+  invocation_id, attempt_id, campaign_id, agent_role, prompt_key,
+  prompt_version, rendered_prompt, raw_response, structured_response,
+  status, repair_of_invocation_id, completed_at
+) values
+  ('repair-base-invocation', 'repair-base-attempt', 'budget-test', 'semantic',
+   'semantic_judge', 'v1', 'original prompt', '{"decision":"distinct",}', '{}'::jsonb,
+   'schema_failed', null, now()),
+  ('repair-child-invocation', 'repair-child-attempt', 'budget-test', 'structured_output_repair',
+   'repair_structured_output', 'v1', 'repair prompt', '{"repairable":true}',
+   '{"repairable":true,"repaired_output":{"decision":"distinct"},"error":null,"original_schema_validated":true}'::jsonb,
+   'succeeded', 'repair-base-invocation', now());
+
+do $$
+declare
+  v_reserved boolean;
+  v_reason text;
+  v_cached_result jsonb;
+begin
+  select reserved, reason, cached_result
+  into v_reserved, v_reason, v_cached_result
+  from qb3.reserve_provider_budget(
+    'repair-base-attempt', 'budget-test', null, null, null,
+    'semantic', 'openai', 'test-model', 'high', 0.010000
+  );
+
+  assert not v_reserved and v_reason = 'idempotent_reconciled',
+    'a repaired attempt must remain idempotent on resume';
+  assert v_cached_result ->> 'status' = 'succeeded'
+      and v_cached_result -> 'structured_response' = '{"decision":"distinct"}'::jsonb
+      and v_cached_result ->> 'repair_of_invocation_id' = 'repair-base-invocation',
+    'resume must return the repaired original-role payload instead of the stale schema failure';
 end;
 $$;
 
@@ -221,7 +385,7 @@ insert into qb3.campaigns (
 );
 
 insert into qb3.batches (campaign_id, batch_index, requested_level_mix)
-values ('admission-test', 1, '{"shallow":1,"deep":1}'::jsonb)
+values ('admission-test', 1, '{"shallow":5,"deep":15}'::jsonb)
 returning batch_id as test_batch_id \gset
 
 insert into qb3.missions (
@@ -230,10 +394,53 @@ insert into qb3.missions (
   'admission-test', :'test_batch_id', 1, 'shallow', '{}'::jsonb, '{}'::jsonb
 ) returning mission_id as test_mission_id \gset
 
+do $$
+declare
+  v_batch_id uuid;
+  v_rejected boolean := false;
+begin
+  select batch_id into v_batch_id from qb3.batches
+  where campaign_id = 'admission-test' and batch_index = 1;
+  begin
+    perform * from qb3.persist_mission_and_candidates(
+      'admission-test', v_batch_id, 2, 'shallow', '{}'::jsonb,
+      '{"mission_slot":2,"level":"shallow","brief":"wrong level"}'::jsonb,
+      '["A?","B?","C?","D?","E?"]'::jsonb
+    );
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'mission persistence must reject a level that contradicts the batch mix';
+  assert (select count(*) = 0 from qb3.candidates where batch_id = v_batch_id),
+    'an invalid mission must not create candidates';
+end;
+$$;
+
 select * from qb3.persist_mission_and_candidates(
   'admission-test', :'test_batch_id', 2, 'deep',
   '{"summary":"test"}'::jsonb,
-  '{"brief":"distinct everyday situations"}'::jsonb,
+  '{"mission_slot":2,"level":"deep","brief":"distinct everyday situations"}'::jsonb,
+  '[]'::jsonb
+);
+
+do $$
+begin
+  assert (
+    select count(*) = 1 from qb3.missions
+    where batch_id = (select batch_id from qb3.batches where campaign_id = 'admission-test' and batch_index = 1)
+      and mission_slot = 2
+  ), 'mission must be durable before the Creative provider call';
+  assert (
+    select count(*) = 0 from qb3.candidates
+    where batch_id = (select batch_id from qb3.batches where campaign_id = 'admission-test' and batch_index = 1)
+      and candidate_index between 6 and 10
+  ), 'pre-Creative mission persistence must not fabricate candidates';
+end;
+$$;
+
+select * from qb3.persist_mission_and_candidates(
+  'admission-test', :'test_batch_id', 2, 'deep',
+  '{"summary":"test"}'::jsonb,
+  '{"mission_slot":2,"level":"deep","brief":"distinct everyday situations"}'::jsonb,
   '["Question one?","Question two?","Question three?","Question four?","Question five?"]'::jsonb
 );
 
@@ -243,6 +450,30 @@ begin
     select count(*) = 5 from qb3.candidates
     where campaign_id = 'admission-test' and candidate_index between 6 and 10
   ), 'one Creative invocation must persist five independent candidates';
+end;
+$$;
+
+do $$
+declare
+  v_batch_id uuid;
+  v_candidate_id uuid;
+  v_rejected boolean := false;
+begin
+  select batch_id into v_batch_id from qb3.batches
+  where campaign_id = 'admission-test' and batch_index = 1;
+  select candidate_id into v_candidate_id from qb3.candidates
+  where batch_id = v_batch_id order by candidate_index limit 1;
+  begin
+    perform * from qb3.apply_quality_results(
+      v_batch_id,
+      jsonb_build_array(
+        jsonb_build_object('candidate_id', v_candidate_id, 'verdict', 'pass'),
+        jsonb_build_object('candidate_id', v_candidate_id, 'verdict', 'pass')
+      ), false
+    );
+  exception when others then v_rejected := true;
+  end;
+  assert v_rejected, 'quality application must reject duplicate candidate ids atomically';
 end;
 $$;
 
@@ -284,6 +515,9 @@ begin
   where batch_id = v_batch_id and state = 'proposed'
     and quality_result ->> 'verdict' = 'pass';
 
+  assert (select count(*) = 0 from qb3.get_preflight_candidates(v_batch_id)),
+    'preflight replay must skip candidates whose embeddings are already stored';
+
   assert (select count(*) = 1 from qb3.get_semantic_groups(v_batch_id)),
     'three eligible candidates must fit in one semantic group of at most five';
 
@@ -307,6 +541,23 @@ begin
     'answer_space', 'short answer', 'contrast', null
   )) into v_metadata from qb3.candidates
   where batch_id = v_batch_id and candidate_index = 6;
+
+  begin
+    perform * from qb3.apply_metadata_results(v_batch_id, '[]'::jsonb);
+    raise exception 'missing metadata unexpectedly accepted';
+  exception
+    when raise_exception then
+      if sqlerrm = 'missing metadata unexpectedly accepted' then raise; end if;
+  end;
+
+  begin
+    perform * from qb3.apply_metadata_results(v_batch_id, v_metadata || v_metadata);
+    raise exception 'duplicate metadata unexpectedly accepted';
+  exception
+    when raise_exception then
+      if sqlerrm = 'duplicate metadata unexpectedly accepted' then raise; end if;
+  end;
+
   perform * from qb3.apply_metadata_results(v_batch_id, v_metadata);
 
   assert (select metadata_result is not null from qb3.candidates
@@ -387,11 +638,81 @@ begin
 end;
 $$;
 
+insert into qb3.candidates (
+  campaign_id, batch_id, mission_id, candidate_index, question_text,
+  normalized_text, level, embedding
+) values (
+  'admission-test', :'test_batch_id', :'test_mission_id', 5,
+  'A surplus candidate?', qb3.normalize_question('A surplus candidate?'), 'shallow',
+  array_fill(0.05::real, array[1536])::vector
+);
+
 update qb3.batches
 set status = 'completed', completed_at = now()
 where batch_id = :'test_batch_id';
 
 select * from qb3.complete_batch(:'test_batch_id');
+
+do $$
+begin
+  assert (
+    select state = 'operationally_unresolved'
+      and rejection_reason_codes = '["campaign_target_reached"]'::jsonb
+    from qb3.candidates
+    where campaign_id = 'admission-test' and candidate_index = 5
+  ), 'batch completion must terminalize surplus proposed candidates';
+end;
+$$;
+
+insert into qb3.campaigns (
+  campaign_id, campaign_name, raw_input, level_mode, accepted_target,
+  shallow_target, deep_target, accepted_shallow, accepted_deep,
+  authorized_budget_usd, prompt_snapshot_id, emergency_batch_ceiling
+) values (
+  'level-terminality-test', 'Level terminality test', '{}'::jsonb, 'mixed', 2,
+  1, 1, 1, 0, 1.000000, :'test_prompt_snapshot_id', 2
+);
+
+insert into qb3.batches (campaign_id, batch_index, requested_level_mix)
+values ('level-terminality-test', 1, '{"shallow":1,"deep":1}'::jsonb)
+returning batch_id as level_terminality_batch_id \gset
+
+insert into qb3.missions (
+  campaign_id, batch_id, mission_slot, level, observation_report, mission
+) values
+  ('level-terminality-test', :'level_terminality_batch_id', 1, 'shallow', '{}'::jsonb, '{}'::jsonb),
+  ('level-terminality-test', :'level_terminality_batch_id', 2, 'deep', '{}'::jsonb, '{}'::jsonb);
+
+insert into qb3.candidates (
+  campaign_id, batch_id, mission_id, candidate_index, question_text, normalized_text, level
+)
+select 'level-terminality-test', :'level_terminality_batch_id', mission_id,
+       mission_slot, 'Level candidate ' || mission_slot || '?',
+       'level candidate ' || mission_slot, level
+from qb3.missions
+where batch_id = :'level_terminality_batch_id';
+
+select * from qb3.complete_batch(:'level_terminality_batch_id');
+
+do $$
+begin
+  assert (
+    select status = 'running'
+    from qb3.campaigns where campaign_id = 'level-terminality-test'
+  ), 'a mixed campaign must remain running while one level target is unfinished';
+  assert (
+    select state = 'operationally_unresolved'
+      and rejection_reason_codes = '["level_target_reached"]'::jsonb
+    from qb3.candidates
+    where campaign_id = 'level-terminality-test' and level = 'shallow'
+  ), 'batch completion must terminalize surplus candidates for a completed level';
+  assert (
+    select state = 'proposed'
+    from qb3.candidates
+    where campaign_id = 'level-terminality-test' and level = 'deep'
+  ), 'batch completion must preserve candidates for an unfinished level';
+end;
+$$;
 
 insert into qb3.candidates (
   campaign_id, batch_id, mission_id, candidate_index, question_text,
@@ -418,10 +739,20 @@ insert into qb3.provider_attempts (
 
 do $$
 declare
+  v_accepted boolean;
+  v_accept_reason text;
   v_reserved boolean;
   v_reason text;
   v_cached_result jsonb;
 begin
+  select accepted, reason into v_accepted, v_accept_reason
+  from qb3.accept_candidate((
+    select candidate_id from qb3.candidates
+    where campaign_id = 'admission-test' and candidate_index = 3
+  ));
+  assert not v_accepted and v_accept_reason = 'campaign_not_accepting',
+    'admission must stop atomically after the campaign becomes terminal';
+
   select reserved, reason, cached_result
   into v_reserved, v_reason, v_cached_result
   from qb3.reserve_provider_budget(

@@ -12,7 +12,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Reconcile in PostgreSQL', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Reconcile in PostgreSQL', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.reconcile_provider_attempt($1, $2::numeric, $3, $4::jsonb);',
     options: { queryReplacement: expr("{{ [$('Input').item.json.attempt_id, $('Input').item.json.actual_cost_usd, $('Input').item.json.reported_model, JSON.stringify($('Input').item.json.usage)] }}"), largeNumbersOutput: 'text' },

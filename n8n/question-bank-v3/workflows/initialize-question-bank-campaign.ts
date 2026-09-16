@@ -25,7 +25,7 @@ const prompts = node({
 
 const aggregatePrompts = node({
   type: 'n8n-nodes-base.aggregate', version: 1,
-  config: { name: 'Freeze prompt rows', executeOnce: true, parameters: {
+  config: { name: 'Freeze prompt rows', parameters: {
     aggregate: 'aggregateAllItemData', destinationFieldName: 'prompts', include: 'allFields',
     options: { includeBinaries: false },
   } },
@@ -43,7 +43,7 @@ const runtimes = node({
 
 const aggregateRuntimes = node({
   type: 'n8n-nodes-base.aggregate', version: 1,
-  config: { name: 'Freeze runtime rows', executeOnce: true, parameters: {
+  config: { name: 'Freeze runtime rows', parameters: {
     aggregate: 'aggregateAllItemData', destinationFieldName: 'runtimes', include: 'allFields',
     options: { includeBinaries: false },
   } },
@@ -59,7 +59,7 @@ const registries = merge({
 
 const initialize = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Create campaign with immutable configuration', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Create campaign with immutable configuration', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.initialize_campaign($1, $2, $3::jsonb, $4, $5::integer, $6::numeric, $7::jsonb, 100, nullif($8, \'\'));',
     options: { queryReplacement: expr("{{ [$('Campaign input').item.json.campaign_id, $('Campaign input').item.json.campaign_name, JSON.stringify($('Campaign input').item.json.raw_input), $('Campaign input').item.json.level_mode, $('Campaign input').item.json.accepted_target, $('Campaign input').item.json.authorized_budget_usd, JSON.stringify({ prompts: $('Combine frozen registries').item.json.prompts, configuration: { runtimes: $('Combine frozen registries').item.json.runtimes } }), $('Campaign input').item.json.notes || ''] }}"), largeNumbersOutput: 'text' },

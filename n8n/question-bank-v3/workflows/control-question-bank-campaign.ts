@@ -2,7 +2,7 @@ import { workflow, node, trigger, newCredential, expr, ifElse, sticky } from '@n
 
 const form = trigger({
   type: 'n8n-nodes-base.formTrigger', version: 2.3,
-  config: { name: 'Campaign control form', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth') }, parameters: {
+  config: { name: 'Campaign control form', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth', 'RhDqaHYrJyNybEEm') }, parameters: {
     authentication: 'basicAuth',
     formTitle: 'Control Question Bank v3 campaign',
     formDescription: 'Status is read-only. Cancel is cooperative. Resume requires new positive spending authorization.',
@@ -20,7 +20,7 @@ const form = trigger({
 
 const command = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Apply campaign command', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Apply campaign command', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select result from qb3.campaign_command($1, $2, $3::numeric);',
     options: { queryReplacement: expr("{{ [$('Campaign control form').item.json.campaign_id, $('Campaign control form').item.json.action, $('Campaign control form').item.json.additional_budget_usd || 0] }}"), largeNumbersOutput: 'text' },
@@ -45,7 +45,7 @@ const worker = node({
   } },
 });
 
-const note = sticky('## Durable controls\nStatus never invokes a provider. Cancel is cooperative. Resume first records a new positive budget authorization, then launches a fresh worker execution from PostgreSQL state.', [form, command, isResume, worker], { color: 5 });
+const note = sticky('## Durable controls\nStatus never invokes a provider. Cancel is cooperative. Resume first records a new positive budget authorization, then launches a fresh worker execution from PostgreSQL state. Internal continuation remains an orchestration detail and is not exposed as an operator action.', [form, command, isResume, worker], { color: 5 });
 
 export default workflow('qb3-control-campaign', 'Control Question Bank campaign')
   .add(form).to(command).to(isResume.onTrue(worker))

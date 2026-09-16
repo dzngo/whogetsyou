@@ -39,4 +39,36 @@ docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
 
 docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
   -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/002_continue_cancelled_campaign.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/003_skip_existing_candidate_embeddings.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/004_enforce_campaign_admission_target.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/005_finalize_unprocessed_candidates.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/006_resume_successful_repair.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/007_track_workflow_execution_context.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/008_harden_generation_quality_distribution.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/009_harden_resume_trace_and_metadata.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
   < "$(dirname "$0")/sql/900_test_question_bank_v3.sql"

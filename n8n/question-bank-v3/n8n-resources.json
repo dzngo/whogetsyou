@@ -2,6 +2,13 @@
   "projectId": "VjBkEYtIDaJhIgbM",
   "promptRegistryDataTableId": "90OyDDiirMaktgSm",
   "runtimeRegistryDataTableId": "OYXu6ScEyx3IDULQ",
+  "credentials": {
+    "postgres": { "name": "Question Bank v3 Postgres", "id": "h3ZyIgobxf9KpDG3" },
+    "openai": { "name": "Question Bank v3 OpenAI", "id": "EtyHRCKzh3b0xyy0" },
+    "gemini": { "name": "Question Bank v3 Gemini", "id": "saq0VdVjhktN52p7" },
+    "openaiHttp": { "name": "Question Bank v3 OpenAI HTTP", "id": "znA69osGbjXZQJsa" },
+    "operatorBasicAuth": { "name": "Question Bank v3 Operator Basic Auth", "id": "RhDqaHYrJyNybEEm" }
+  },
   "workflows": {
     "reserveProviderBudget": "O4Sfd0diGAB53tsL",
     "reconcileProviderAttempt": "O2721VLonNSui2TW",

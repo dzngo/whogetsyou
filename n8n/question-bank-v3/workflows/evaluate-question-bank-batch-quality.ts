@@ -9,11 +9,17 @@ const input = trigger({
 
 const qualityGroups = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Read quality groups of ten', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: 'select * from qb3.get_quality_groups($1::uuid, false);',
+  config: { name: 'Read quality groups of ten', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.get_quality_groups($1::uuid, false)) select group_index, candidates, true as has_items from groups union all select 0, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id] }}") },
   } },
 });
+
+const qualityGroupsAvailable = ifElse({ version: 2.3, config: { name: 'Any quality groups?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr('{{ $json.has_items }}'), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+  ],
+} } } });
 
 const qualityLoop = splitInBatches({ version: 3, config: { name: 'Evaluate each quality group', parameters: { batchSize: 1 } } });
 
@@ -39,12 +45,13 @@ const quality = node({
 const qualityOk = ifElse({ version: 2.3, config: { name: 'Quality output usable?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'succeeded', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ (() => { const expected = $('Read quality groups of ten').item.json.candidates.map(c => c.candidate_id).sort(); const actual = ($json.structured_response?.decisions || []).map(d => d.candidate_id).sort(); return actual.length === expected.length && new Set(actual).size === actual.length && actual.every((id, i) => id === expected[i]); })() }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ],
 } } } });
 
 const applyQuality = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Apply independent quality decisions', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Apply independent quality decisions', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery', query: 'select * from qb3.apply_quality_results($1::uuid, $2::jsonb, false);',
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('4. Quality Judge').item.json.structured_response.decisions)] }}") },
   } },
@@ -52,19 +59,25 @@ const applyQuality = node({
 
 const markQualityGroup = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Isolate failed quality group', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: "select * from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality', 'Quality provider attempts failed');",
+  config: { name: 'Isolate failed quality group', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality', 'Quality provider attempts failed');",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('Read quality groups of ten').item.json.candidates.map(c => c.candidate_id))] }}") },
   } },
 });
 
 const uncertainGroups = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Read uncertain quality groups', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: 'select * from qb3.get_quality_groups($1::uuid, true);',
+  config: { name: 'Read uncertain quality groups', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.get_quality_groups($1::uuid, true)) select group_index, candidates, true as has_items from groups union all select 0, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id] }}") },
   } },
 });
+
+const uncertainGroupsAvailable = ifElse({ version: 2.3, config: { name: 'Any uncertain groups?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr('{{ $json.has_items }}'), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+  ],
+} } } });
 
 const escalationLoop = splitInBatches({ version: 3, config: { name: 'Escalate uncertain groups', parameters: { batchSize: 1 } } });
 
@@ -90,12 +103,13 @@ const escalation = node({
 const escalationOk = ifElse({ version: 2.3, config: { name: 'Escalation output usable?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'succeeded', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ (() => { const expected = $('Read uncertain quality groups').item.json.candidates.map(c => c.candidate_id).sort(); const actual = ($json.structured_response?.decisions || []).map(d => d.candidate_id).sort(); return actual.length === expected.length && new Set(actual).size === actual.length && actual.every((id, i) => id === expected[i]); })() }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ],
 } } } });
 
 const applyEscalation = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Apply escalation decisions', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Apply escalation decisions', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery', query: 'select * from qb3.apply_quality_results($1::uuid, $2::jsonb, true);',
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('5. Quality Escalation Agent').item.json.structured_response.decisions)] }}") },
   } },
@@ -103,8 +117,8 @@ const applyEscalation = node({
 
 const markEscalationGroup = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Isolate failed escalation group', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: "select * from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality_escalation', 'Quality escalation provider attempts failed');",
+  config: { name: 'Isolate failed escalation group', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality_escalation', 'Quality escalation provider attempts failed');",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('Read uncertain quality groups').item.json.candidates.map(c => c.candidate_id))] }}") },
   } },
 });
@@ -119,14 +133,22 @@ const done = node({
 
 const note = sticky('## Quality\nCandidates are judged independently in groups of ten. Only uncertain cases receive one high-reasoning escalation. Provider failure isolates that group; it does not discard other candidates.', [qualityGroups, qualityLoop, quality, applyQuality, uncertainGroups, escalationLoop, escalation, applyEscalation], { color: 6 });
 
-export default workflow('qb3-quality-stage', 'Evaluate Question Bank batch quality')
-  .add(input).to(qualityGroups).to(qualityLoop
+const escalationStage = uncertainGroups.to(uncertainGroupsAvailable
+  .onTrue(escalationLoop
+    .onEachBatch(escalation.to(escalationOk
+      .onTrue(applyEscalation.to(nextBatch(escalationLoop)))
+      .onFalse(markEscalationGroup.to(nextBatch(escalationLoop)))))
+    .onDone(done))
+  .onFalse(done));
+
+const qualityStage = qualityLoop
     .onEachBatch(quality.to(qualityOk
       .onTrue(applyQuality.to(nextBatch(qualityLoop)))
       .onFalse(markQualityGroup.to(nextBatch(qualityLoop)))))
-    .onDone(uncertainGroups.to(escalationLoop
-      .onEachBatch(escalation.to(escalationOk
-        .onTrue(applyEscalation.to(nextBatch(escalationLoop)))
-        .onFalse(markEscalationGroup.to(nextBatch(escalationLoop)))))
-      .onDone(done))))
+    .onDone(escalationStage);
+
+export default workflow('qb3-quality-stage', 'Evaluate Question Bank batch quality')
+  .add(input).to(qualityGroups).to(qualityGroupsAvailable
+    .onTrue(qualityStage)
+    .onFalse(escalationStage))
   .add(note);

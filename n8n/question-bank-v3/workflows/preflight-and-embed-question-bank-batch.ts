@@ -9,11 +9,17 @@ const input = trigger({
 
 const candidates = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Read quality-approved candidates', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: 'select * from qb3.get_preflight_candidates($1::uuid);',
+  config: { name: 'Read quality-approved candidates', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "with candidates as materialized (select * from qb3.get_preflight_candidates($1::uuid)) select candidate_id, question_text, level, true as has_items from candidates union all select null::uuid, ''::text, ''::text, false where not exists (select 1 from candidates);",
     options: { queryReplacement: expr("{{ [$('Preflight stage input').item.json.batch_id] }}") },
   } },
 });
+
+const candidatesAvailable = ifElse({ version: 2.3, config: { name: 'Any preflight candidates?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr('{{ $json.has_items }}'), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+  ],
+} } } });
 
 const candidateLoop = splitInBatches({ version: 3, config: { name: 'Preflight and embed each candidate', parameters: { batchSize: 1 } } });
 
@@ -62,8 +68,8 @@ const embeddingOk = ifElse({ version: 2.3, config: { name: 'Embedding stored?', 
 
 const markCandidate = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Isolate failed embedding candidate', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
-    operation: 'executeQuery', query: "select * from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'embedding', 'Embedding provider attempt failed or budget was unavailable');",
+  config: { name: 'Isolate failed embedding candidate', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'embedding', 'Embedding provider attempt failed or budget was unavailable');",
     options: { queryReplacement: expr("{{ [$('Preflight stage input').item.json.batch_id, JSON.stringify([$('Read quality-approved candidates').item.json.candidate_id])] }}") },
   } },
 });
@@ -79,11 +85,13 @@ const done = node({
 const note = sticky('## Exact duplicate and vector retrieval\nEvery quality-approved candidate is normalized. Exact accepted-bank matches stop here. Every survivor is embedded exactly once and retrieves at most ten nearest accepted questions.', [candidates, candidateLoop, preflight, embed, markCandidate], { color: 4 });
 
 export default workflow('qb3-preflight-embed-stage', 'Preflight and embed Question Bank batch')
-  .add(input).to(candidates).to(candidateLoop
-    .onEachBatch(preflight.to(isExactDuplicate
-      .onTrue(nextBatch(candidateLoop))
-      .onFalse(embed.to(embeddingOk
+  .add(input).to(candidates).to(candidatesAvailable
+    .onTrue(candidateLoop
+      .onEachBatch(preflight.to(isExactDuplicate
         .onTrue(nextBatch(candidateLoop))
-        .onFalse(markCandidate.to(nextBatch(candidateLoop)))))))
-    .onDone(done))
+        .onFalse(embed.to(embeddingOk
+          .onTrue(nextBatch(candidateLoop))
+          .onFalse(markCandidate.to(nextBatch(candidateLoop)))))))
+      .onDone(done))
+    .onFalse(done))
   .add(note);

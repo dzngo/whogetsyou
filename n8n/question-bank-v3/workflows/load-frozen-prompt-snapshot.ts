@@ -10,7 +10,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Load immutable prompt', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Load immutable prompt', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.load_frozen_prompt($1, $2);',
     options: { queryReplacement: expr("{{ [$('Input').item.json.campaign_id, $('Input').item.json.prompt_key] }}") },

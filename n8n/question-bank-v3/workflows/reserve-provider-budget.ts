@@ -50,7 +50,7 @@ const reserve = node({
         largeNumbersOutput: 'text',
       },
     },
-    credentials: { postgres: newCredential('Question Bank v3 Postgres') },
+    credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') },
     output: [{ reserved: true, reason: 'reserved', remaining_usd: '5.990000', cached_result: null }],
   },
 });

@@ -69,7 +69,7 @@ const primary = node({
 });
 const primaryUnavailable = ifElse({ version: 2.3, config: { name: 'Primary returned confirmed 503?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Primary Gemini Flash Lite').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Primary Gemini Flash Lite').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const fallbackOne = node({
@@ -117,7 +117,7 @@ const fallbackOne = node({
 });
 const fallbackOneUnavailable = ifElse({ version: 2.3, config: { name: 'First fallback returned confirmed 503?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Fallback Gemini 3 Flash').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Fallback Gemini 3 Flash').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const fallbackTwo = node({
@@ -165,7 +165,7 @@ const fallbackTwo = node({
 });
 const fallbackTwoUnavailable = ifElse({ version: 2.3, config: { name: 'Second fallback returned confirmed 503?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Fallback Gemini 3.6 Flash').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Fallback Gemini 3.6 Flash').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const finalPrimary = node({
@@ -213,7 +213,7 @@ const finalPrimary = node({
 });
 const finalUnavailable = ifElse({ version: 2.3, config: { name: 'Final primary returned confirmed 503?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Final primary Gemini retry').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Final primary Gemini retry').item.json.status || '' }}"), rightValue: 'unavailable_503', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const unresolved = node({
@@ -225,10 +225,10 @@ const unresolved = node({
   ] } } },
 });
 export default workflow('qb3-invoke-gemini-waterfall', 'Invoke Gemini agent with 503 waterfall')
-  .add(input.to(loadPrompt).to(primary).to(primaryUnavailable.onTrue(
-    fallbackOne.to(fallbackOneUnavailable.onTrue(
-      fallbackTwo.to(fallbackTwoUnavailable.onTrue(
-        finalPrimary.to(finalUnavailable.onTrue(unresolved))
+  .add(input.to(loadPrompt).to(primary).to(primaryUnavailable.onFalse(
+    fallbackOne.to(fallbackOneUnavailable.onFalse(
+      fallbackTwo.to(fallbackTwoUnavailable.onFalse(
+        finalPrimary.to(finalUnavailable.onFalse(unresolved))
       ))
     ))
   )));

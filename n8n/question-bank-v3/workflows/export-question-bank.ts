@@ -2,7 +2,7 @@ import { workflow, node, trigger, newCredential, expr } from '@n8n/workflow-sdk'
 
 const form = trigger({
   type: 'n8n-nodes-base.formTrigger', version: 2.3,
-  config: { name: 'Export filters', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth') }, parameters: {
+  config: { name: 'Export filters', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth', 'RhDqaHYrJyNybEEm') }, parameters: {
     authentication: 'basicAuth',
     formTitle: 'Export Question Bank v3',
     formDescription: 'Export accepted questions or campaign candidates. Leave text filters blank to include all.',
@@ -20,7 +20,7 @@ const form = trigger({
 
 const selectRows = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Select authoritative rows', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Select authoritative rows', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: `select q.question_id::text as record_id, q.question_text, q.level,
       'accepted'::text as state, c.campaign_id,

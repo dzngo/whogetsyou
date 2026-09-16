@@ -22,7 +22,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Persist complete trace', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Persist complete trace', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: `select * from qb3.persist_agent_run(
       $1, $2, $3, nullif($4, '')::uuid, nullif($5, '')::uuid,

@@ -103,18 +103,21 @@ Phases:
 
 ## 3. Offline Question Bank Enrichment
 
-> **Question Bank v3 is moving to n8n.** The implementation starts with an
+> **Question Bank v3 runs in n8n.** The implementation starts with an
 > empty PostgreSQL/pgvector bank and uses n8n as both the visible orchestrator
 > and day-to-day prompt/input/output inspector. See the
 > [approved v3 migration plan](docs/n8n-question-bank-v3-migration-plan.md) and
 > [local implementation guide](n8n/question-bank-v3/README.md). The ADK,
 > Phoenix, SQLite, and v2/v2.1 instructions below describe the legacy system and
-> remain available only until the v3 qualification gate passes; they are not the
-> target path for new v3 campaigns.
+> remain available only for explicit historical recovery; they are not a
+> production path for new campaigns.
 
-The legacy `question_bank` package remains available for the existing v2/v2.1 banks. It does not alter live gameplay generation or question sampling. New Question Bank v3 campaigns are being cut over to the n8n-native implementation described above; Google ADK and Phoenix remain the legacy production path only until the n8n credential, non-paid test, and paid qualification gates pass.
+The legacy `question_bank` package remains available for the existing v2/v2.1
+banks. It does not alter live gameplay generation or question sampling. n8n is
+the sole production owner for new Question Bank campaigns. Google ADK is
+disabled by default, and Phoenix remains opt-in historical tooling only.
 
-### 3.1 Multi-agent architecture
+### 3.1 Legacy v2/v2.1 multi-agent architecture
 
 The architecture deliberately mixes Gemini and GPT while keeping admission authority in deterministic code:
 
@@ -131,11 +134,12 @@ The architecture deliberately mixes Gemini and GPT while keeping admission autho
 
 The graph displays campaign initialization, mission planning, four concurrent creative Agents, creative join/proposal persistence, duplicate preflight, routine and uncertainty quality review, local and LLM semantic review, admission, Observation, metadata, final diversity evidence, atomic export, and the batch loop. Only the four creative Agents run concurrently; batches and every downstream stage run sequentially. Candidate text, costs, decisions, and human-review cases stay in the Question Bank SQLite database. ADK stores lightweight local session/event history in SQLite under `.adk/`.
 
-Run the production control surface locally:
+For explicit historical recovery only, enable and run the legacy ADK surface:
 
 ```bash
 export QUESTION_BANK_ROOT=storage/question_bank_v2.1
 export QUESTION_BANK_EMBEDDING_CHECKSUM=<verified-checksum>
+export QUESTION_BANK_ENABLE_LEGACY_ADK=1
 .venv/bin/adk web --session_service_uri=sqlite:///storage/question_bank_v2.1/.adk/web-sessions.sqlite3 question_bank
 ```
 
@@ -177,7 +181,7 @@ For a paused shallow campaign, `python -m question_bank.recover_campaign --root 
 
 Every provider call uses structured input and output. GPT batch schemas enumerate the exact requested candidate or pair IDs and require the exact record count. GPT calls use low output verbosity and reserve enough output tokens for both reasoning and the complete JSON record set. The system records the provider/model identity, reasoning setting, prompt and schema hashes, native usage, cost evidence, and concise reason codes. It neither requests nor stores private chain-of-thought. LLM Agents cannot mutate trusted bank state or authorize their own spending.
 
-### 3.2 Agent input/output dashboard
+### 3.2 Legacy Phoenix input/output dashboard
 
 Phoenix provides an optional local dashboard for real campaign invocations. The trace hierarchy is Campaign → Batch → workflow stage → Gemini/OpenAI attempt, including model fallback attempts and semantic chunks. Each span shows the exact credential-free logical request passed to the SDK, the parsed structured response, provider, requested and reported model, thinking level, token usage, cost, status, and sanitized error details. Terminal batch and campaign spans are closed immediately. API keys, transport headers, and private chain-of-thought are never captured.
 

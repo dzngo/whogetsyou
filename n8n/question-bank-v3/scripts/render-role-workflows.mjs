@@ -1,10 +1,22 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outputDir = resolve(here, '..', 'workflows');
 mkdirSync(outputDir, { recursive: true });
+const checkOnly = process.argv.includes('--check');
+
+function writeOrCheck(path, content) {
+  if (checkOnly) {
+    const existing = readFileSync(path, 'utf8');
+    if (existing !== content) {
+      throw new Error(`Generated workflow is stale: ${path}`);
+    }
+    return;
+  }
+  writeFileSync(path, content);
+}
 
 const roles = [
   ['observe-question-bank-diversity', 'Observe Question Bank diversity', 'observation', 'observe_diversity', 'gemini', 'high'],
@@ -88,80 +100,6 @@ export default workflow('qb3-${slug}', '${name}').add(input).to(loadPrompt).to(i
 `;
 }
 
-function renderRepair() {
-  const geminiInputs = providerInputs('gemini', 'structured_output_repair', 'repair_structured_output', 'low');
-  const openaiInputs = providerInputs('openai', 'structured_output_repair', 'repair_structured_output', 'low');
-  return `import { workflow, node, trigger, expr, switchCase } from '@n8n/workflow-sdk';
-
-const input = trigger({
-  type: 'n8n-nodes-base.executeWorkflowTrigger', version: 1.2,
-  config: { name: 'Agent input', parameters: { inputSource: 'workflowInputs', workflowInputs: { values: [${commonInputs}
-    { name: 'provider_family', type: 'string' },
-    { name: 'repair_of_invocation_id', type: 'string' },
-  ] } } },
-});
-
-const loadPrompt = node({
-  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
-  config: { name: 'Load frozen prompt', parameters: {
-    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'U7PU7ThIM1W90rXb' },
-    ${loadInputs.replace('PROMPT_KEY', "'repair_structured_output'")}
-  } },
-});
-
-const route = switchCase({ version: 3.4, config: { name: 'Use original provider family', parameters: {
-  mode: 'rules', rules: { values: [
-    { outputKey: 'gemini', conditions: { options: { caseSensitive: false, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [{ leftValue: expr("{{ $('Agent input').item.json.provider_family }}"), rightValue: 'gemini', operator: { type: 'string', operation: 'equals' } }] } },
-    { outputKey: 'openai', conditions: { options: { caseSensitive: false, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [{ leftValue: expr("{{ $('Agent input').item.json.provider_family }}"), rightValue: 'openai', operator: { type: 'string', operation: 'equals' } }] } },
-  ] }, options: { fallbackOutput: 'none' },
-} } });
-
-const gemini = node({
-  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
-  config: { name: 'Repair output — Gemini low', parameters: {
-    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'tiKFH1SLj7mH4dc9' },
-    ${geminiInputs}
-  } },
-});
-
-const openai = node({
-  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
-  config: { name: 'Repair output — OpenAI low', parameters: {
-    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: '2qbdNZNjME7n1pKJ' },
-    ${openaiInputs}
-  } },
-});
-
-const returnGeminiRepair = node({
-  type: 'n8n-nodes-base.set', version: 3.5,
-  config: { name: 'Return Gemini repair result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
-    { id: 'status', name: 'status', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.repairable === true ? 'succeeded' : 'operationally_unresolved' }}"), type: 'string' },
-    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.repaired_output || {} }}"), type: 'object' },
-    { id: 'invocation-id', name: 'invocation_id', value: expr("{{ $('Repair output — Gemini low').item.json.invocation_id || '' }}"), type: 'string' },
-    { id: 'reason', name: 'reason', value: expr("{{ $('Repair output — Gemini low').item.json.structured_response?.error || '' }}"), type: 'string' },
-  ] } } },
-});
-
-const returnOpenAIRepair = node({
-  type: 'n8n-nodes-base.set', version: 3.5,
-  config: { name: 'Return OpenAI repair result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
-    { id: 'status', name: 'status', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.repairable === true ? 'succeeded' : 'operationally_unresolved' }}"), type: 'string' },
-    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.repaired_output || {} }}"), type: 'object' },
-    { id: 'invocation-id', name: 'invocation_id', value: expr("{{ $('Repair output — OpenAI low').item.json.invocation_id || '' }}"), type: 'string' },
-    { id: 'reason', name: 'reason', value: expr("{{ $('Repair output — OpenAI low').item.json.structured_response?.error || '' }}"), type: 'string' },
-  ] } } },
-});
-
-export default workflow('qb3-repair-structured-output', 'Repair structured agent output')
-  .add(input).to(loadPrompt).to(route
-    .onCase(0, gemini.to(returnGeminiRepair))
-    .onCase(1, openai.to(returnOpenAIRepair))
-  );
-`;
-}
-
 for (const role of roles) {
-  writeFileSync(resolve(outputDir, `${role[0]}.ts`), renderRole(role));
+  writeOrCheck(resolve(outputDir, `${role[0]}.ts`), renderRole(role));
 }
-
-writeFileSync(resolve(outputDir, 'repair-structured-agent-output.ts'), renderRepair());

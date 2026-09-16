@@ -9,7 +9,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Normalize and check exact duplicate', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Normalize and check exact duplicate', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.preflight_candidate($1::uuid);',
     options: { queryReplacement: expr("{{ [$('Input').item.json.candidate_id] }}") },

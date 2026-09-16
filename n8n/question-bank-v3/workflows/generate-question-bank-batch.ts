@@ -55,6 +55,7 @@ const missions = node({
 const missionsOk = ifElse({ version: 2.3, config: { name: 'Missions usable?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'succeeded', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ (() => { const ms = $json.structured_response?.missions; const mix = $('Batch generation input').item.json.requested_level_mix || {}; if (!Array.isArray(ms) || ms.length !== 4) return false; const slots = ms.map(m => m.mission_slot).sort((a,b) => a-b); if (slots.join(',') !== '1,2,3,4') return false; const shallow = ms.filter(m => m.level === 'shallow').length; const deep = ms.filter(m => m.level === 'deep').length; return shallow * 5 === Number(mix.shallow || 0) && deep * 5 === Number(mix.deep || 0); })() }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ],
 } } } });
 
@@ -67,16 +68,38 @@ const splitMissions = node({
 
 const missionLoop = splitInBatches({ version: 3, config: { name: 'Run four Creative agents sequentially', parameters: { batchSize: 1 } } });
 
+const persistMission = node({
+  type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
+  config: { name: 'Persist mission before Creative', parameters: {
+    mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: '9zwD0MEaJba33INb' },
+    workflowInputs: { mappingMode: 'defineBelow', value: {
+      campaign_id: expr("{{ $('Batch generation input').item.json.campaign_id }}"),
+      batch_id: expr("{{ $('Batch generation input').item.json.batch_id }}"),
+      mission_slot: expr("{{ $('Split four missions').item.json.mission.mission_slot }}"),
+      level: expr("{{ $('Split four missions').item.json.mission.level }}"),
+      observation_report: expr("{{ $('1. Observation Agent').item.json.structured_response }}"),
+      mission: expr("{{ $('Split four missions').item.json.mission }}"),
+      questions: expr('{{ [] }}'),
+    }, matchingColumns: [], schema: [
+      { id: 'campaign_id', displayName: 'campaign_id', type: 'string' }, { id: 'batch_id', displayName: 'batch_id', type: 'string' },
+      { id: 'mission_slot', displayName: 'mission_slot', type: 'number' }, { id: 'level', displayName: 'level', type: 'string' },
+      { id: 'observation_report', displayName: 'observation_report', type: 'object' }, { id: 'mission', displayName: 'mission', type: 'object' },
+      { id: 'questions', displayName: 'questions', type: 'array' },
+    ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
+  } },
+});
+
 const creative = node({
   type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
   config: { name: '3. Creative Agent — five questions', parameters: {
     mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'd13B7MoLCnjxwcrm' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
       campaign_id: expr("{{ $('Batch generation input').item.json.campaign_id }}"),
-      batch_id: expr("{{ $('Batch generation input').item.json.batch_id }}"), candidate_id: '', mission_id: '',
-      attempt_id: expr("{{ $('Batch generation input').item.json.batch_id + '-creative-' + $json.mission.mission_slot }}"),
-      invocation_id: expr("{{ $('Batch generation input').item.json.batch_id + '-creative-' + $json.mission.mission_slot }}"),
-      context: expr("{{ { mission: $json.mission, observation: $('1. Observation Agent').item.json.structured_response } }}"),
+      batch_id: expr("{{ $('Batch generation input').item.json.batch_id }}"), candidate_id: '',
+      mission_id: expr("{{ $('Persist mission before Creative').item.json.mission_id }}"),
+      attempt_id: expr("{{ $('Batch generation input').item.json.batch_id + '-creative-' + $('Split four missions').item.json.mission.mission_slot }}"),
+      invocation_id: expr("{{ $('Batch generation input').item.json.batch_id + '-creative-' + $('Split four missions').item.json.mission.mission_slot }}"),
+      context: expr("{{ { mission: $('Split four missions').item.json.mission, observation: $('1. Observation Agent').item.json.structured_response } }}"),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string' }, { id: 'batch_id', displayName: 'batch_id', type: 'string' },
       { id: 'candidate_id', displayName: 'candidate_id', type: 'string' }, { id: 'mission_id', displayName: 'mission_id', type: 'string' },
@@ -123,19 +146,19 @@ const generationFailed = node({
 
 const generated = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Return persisted candidate count', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Return persisted candidate count', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery', query: "select 'generated'::text as status, count(*)::integer as candidate_count from qb3.candidates where batch_id = $1::uuid;",
     options: { queryReplacement: expr("{{ [$('Batch generation input').item.json.batch_id] }}") },
   } },
 });
 
-const note = sticky('## Generation\nObservation and Mission Writer run once. Four dynamic missions then call one reusable Creative Agent sequentially, five questions each. Every successful mission is persisted immediately.', [observation, missions, splitMissions, missionLoop, creative, persist], { color: 5 });
+const note = sticky('## Generation\nObservation and Mission Writer run once. Each dynamic mission is persisted before its Creative call so the trace carries a durable mission ID. Four reusable Creative invocations run sequentially and return five questions each.', [observation, missions, splitMissions, missionLoop, persistMission, creative, persist], { color: 5 });
 
 export default workflow('qb3-generate-batch', 'Generate Question Bank batch candidates')
   .add(input).to(observation).to(observationOk
     .onTrue(missions.to(missionsOk
       .onTrue(splitMissions.to(missionLoop
-        .onEachBatch(creative.to(creativeOk
+        .onEachBatch(persistMission.to(creative).to(creativeOk
           .onTrue(persist.to(nextBatch(missionLoop)))
           .onFalse(nextBatch(missionLoop))))
         .onDone(generated)))

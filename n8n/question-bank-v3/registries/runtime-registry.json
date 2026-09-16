@@ -7,7 +7,7 @@
     "reasoning": "high",
     "maxInputTokens": 16000,
     "maxOutputTokens": 4096,
-    "reservationUsd": 0.02,
+    "reservationUsd": 0.028,
     "status": "active",
     "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing",
     "notes": "503-only waterfall; direct Gemini node thinkingBudget=-1"
@@ -20,7 +20,7 @@
     "reasoning": "high",
     "maxInputTokens": 16000,
     "maxOutputTokens": 4096,
-    "reservationUsd": 0.02,
+    "reservationUsd": 0.028,
     "status": "active",
     "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing",
     "notes": "Exactly four missions"
@@ -33,7 +33,7 @@
     "reasoning": "high",
     "maxInputTokens": 8000,
     "maxOutputTokens": 4096,
-    "reservationUsd": 0.02,
+    "reservationUsd": 0.028,
     "status": "active",
     "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing",
     "notes": "Exactly five question strings; no example questions in prompt"

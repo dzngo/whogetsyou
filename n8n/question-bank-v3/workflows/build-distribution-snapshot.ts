@@ -10,7 +10,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Build frozen snapshot', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Build frozen snapshot', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: "select qb3.refresh_distribution_snapshot($1, nullif($2, '')::uuid) as distribution_snapshot_id;",
     options: { queryReplacement: expr("{{ [$('Input').item.json.campaign_id, $('Input').item.json.after_batch_id || ''] }}") },

@@ -46,10 +46,37 @@ const reserved = ifElse({ version: 2.3, config: { name: 'Reservation succeeded?'
   ] },
 } } });
 
+const existingReconciled = ifElse({ version: 2.3, config: { name: 'Existing traced attempt?', parameters: {
+  conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr("{{ $('Reserve this Gemini attempt').item.json.status || '' }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+  ] },
+} } });
+
+const returnCached = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return cached Gemini attempt', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'cached-status', name: 'status', type: 'string', value: expr("{{ $('Reserve this Gemini attempt').item.json.structured_response?.transport_status || $('Reserve this Gemini attempt').item.json.status }}") },
+    { id: 'cached-invocation', name: 'invocation_id', type: 'string', value: expr("{{ $('Reserve this Gemini attempt').item.json.invocation_id || '' }}") },
+    { id: 'cached-attempt', name: 'attempt_id', type: 'string', value: expr("{{ $('Reserve this Gemini attempt').item.json.attempt_id || $('Agent input').item.json.attempt_id }}") },
+    { id: 'cached-raw', name: 'raw_response', type: 'string', value: expr("{{ $('Reserve this Gemini attempt').item.json.raw_response || '' }}") },
+    { id: 'cached-structured', name: 'structured_response', type: 'object', value: expr("{{ $('Reserve this Gemini attempt').item.json.structured_response || {} }}") },
+    { id: 'cached-repair', name: 'repair_of_invocation_id', type: 'string', value: expr("{{ $('Reserve this Gemini attempt').item.json.repair_of_invocation_id || '' }}") },
+  ] } } },
+});
+
+const stopDuplicateWorker = node({
+  type: 'n8n-nodes-base.filter', version: 2.3,
+  config: { name: 'Stop duplicate worker while lease is active', parameters: { conditions: {
+    options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 }, combinator: 'and', conditions: [
+      { leftValue: expr("{{ $('Return cached Gemini attempt').item.json.status || '' }}"), rightValue: 'in_flight', operator: { type: 'string', operation: 'notEquals' } },
+    ],
+  } } },
+});
+
 const gemini = node({
   type: '@n8n/n8n-nodes-langchain.googleGemini', version: 1.1,
-  config: { name: 'Gemini role agent — paid', onError: 'continueRegularOutput', credentials: { googlePalmApi: newCredential('Question Bank v3 Gemini') }, parameters: {
-    resource: 'text', operation: 'message', modelId: { __rl: true, mode: 'id', value: expr("{{ $('Agent input').item.json.model_id }}") },
+  config: { name: 'Gemini role agent — paid', onError: 'continueRegularOutput', credentials: { googlePalmApi: newCredential('Question Bank v3 Gemini', 'saq0VdVjhktN52p7') }, parameters: {
+    resource: 'text', operation: 'message', modelId: { __rl: true, mode: 'id', value: expr("{{ 'models/' + String($('Agent input').item.json.model_id).replace(/^models\\//, '') }}") },
     messages: { values: [{ role: 'user', content: expr("{{ $('Agent input').item.json.rendered_prompt + '\n\nReturn only JSON matching this schema:\n' + JSON.stringify($('Agent input').item.json.output_schema) }}") }] },
     simplify: false, jsonOutput: true,
     builtInTools: { googleSearch: false, urlContext: false, codeExecution: false },
@@ -200,43 +227,40 @@ const persistSchemaFailure = node({
   } },
 });
 
-const mayRepair = ifElse({ version: 2.3, config: { name: 'Is this an original agent invocation?', parameters: { conditions: {
+const repairAllowed = ifElse({ version: 2.3, config: { name: 'Repair attempt allowed?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $('Agent input').item.json.agent_role }}"), rightValue: 'structured_output_repair', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 
-const repair = node({
+const repairMalformedOutput = node({
   type: 'n8n-nodes-base.executeWorkflow', version: 1.3,
-  config: { name: 'Repair malformed Gemini output', parameters: {
+  config: { name: 'Repair malformed structured output', parameters: {
     mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: '2urITibrmjZ4fQwh' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
-      campaign_id: expr("{{ $('Agent input').item.json.campaign_id }}"), batch_id: expr("{{ $('Agent input').item.json.batch_id || '' }}"),
-      candidate_id: expr("{{ $('Agent input').item.json.candidate_id || '' }}"), mission_id: expr("{{ $('Agent input').item.json.mission_id || '' }}"),
-      attempt_id: expr("{{ $('Agent input').item.json.attempt_id + '-repair' }}"), invocation_id: expr("{{ $('Agent input').item.json.invocation_id + '-repair' }}"),
-      context: expr("{{ { malformed_response: $('Parse and validate structured output').item.json.parse_result.raw_text, required_schema: $('Agent input').item.json.output_schema, parse_error: $('Parse and validate structured output').item.json.parse_result.error } }}"),
-      provider_family: 'gemini', repair_of_invocation_id: expr("{{ $('Agent input').item.json.invocation_id }}"),
+      campaign_id: expr("{{ $('Agent input').item.json.campaign_id }}"),
+      batch_id: expr("{{ $('Agent input').item.json.batch_id || '' }}"),
+      candidate_id: expr("{{ $('Agent input').item.json.candidate_id || '' }}"),
+      mission_id: expr("{{ $('Agent input').item.json.mission_id || '' }}"),
+      attempt_id: expr("{{ $('Agent input').item.json.attempt_id + '-repair' }}"),
+      parent_attempt_id: expr("{{ $('Agent input').item.json.attempt_id }}"),
+      invocation_id: expr("{{ $('Agent input').item.json.invocation_id + '-repair' }}"),
+      provider_family: 'gemini',
+      repair_of_invocation_id: expr("{{ $('Agent input').item.json.invocation_id }}"),
+      context: expr("{{ ({ malformed_response: $('Parse and validate structured output').item.json.parse_result.raw_text, validation_error: $('Parse and validate structured output').item.json.parse_result.error, required_output_schema: $('Agent input').item.json.output_schema, original_agent_role: $('Agent input').item.json.agent_role, original_prompt_key: $('Agent input').item.json.prompt_key }) }}"),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'candidate_id', displayName: 'candidate_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'mission_id', displayName: 'mission_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'parent_attempt_id', displayName: 'parent_attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'invocation_id', displayName: 'invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'context', displayName: 'context', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'provider_family', displayName: 'provider_family', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'repair_of_invocation_id', displayName: 'repair_of_invocation_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
-});
-
-const returnRepaired = node({
-  type: 'n8n-nodes-base.set', version: 3.5,
-  config: { name: 'Return repaired structured output', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
-    { id: 'status', name: 'status', value: expr("{{ $('Repair malformed Gemini output').item.json.status || 'operationally_unresolved' }}"), type: 'string' },
-    { id: 'structured-response', name: 'structured_response', value: expr("{{ $('Repair malformed Gemini output').item.json.structured_response || {} }}"), type: 'object' },
-    { id: 'repair-invocation-id', name: 'repair_invocation_id', value: expr("{{ $('Repair malformed Gemini output').item.json.invocation_id || '' }}"), type: 'string' },
-  ] } } },
 });
 
 const repairFailed = node({
@@ -285,15 +309,44 @@ const unknown = node({
   } },
 });
 
+const persistProviderFailure = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Persist failed Gemini invocation', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: 'select * from qb3.persist_agent_run($1,$2,$3,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9,$10,$11,$12::jsonb,$13,$14);',
+    options: { queryReplacement: expr("{{ [$('Agent input').item.json.invocation_id, $('Agent input').item.json.attempt_id, $('Agent input').item.json.campaign_id, $('Agent input').item.json.batch_id || null, $('Agent input').item.json.candidate_id || null, $('Agent input').item.json.mission_id || null, $('Agent input').item.json.agent_role, $('Agent input').item.json.prompt_key, $('Agent input').item.json.prompt_version, $('Agent input').item.json.rendered_prompt, JSON.stringify($('Gemini role agent — paid').item.json), JSON.stringify({ error: $('Gemini role agent — paid').item.json.error || $('Gemini role agent — paid').item.json.message || 'provider_failure', transport_status: (String($('Gemini role agent — paid').item.json.statusCode || $('Gemini role agent — paid').item.json.httpCode || '') === '503' || String($('Gemini role agent — paid').item.json.error?.message || $('Gemini role agent — paid').item.json.message || '').toUpperCase().includes('UNAVAILABLE')) ? 'unavailable_503' : 'failed' }), 'failed', $('Agent input').item.json.repair_of_invocation_id || null] }}") },
+  } },
+});
+
+const failedWas503 = ifElse({ version: 2.3, config: { name: 'Failed invocation was confirmed 503?', parameters: {
+  conditions: { options: { caseSensitive: false, leftValue: '', typeValidation: 'strict' }, combinator: 'or', conditions: [
+    { leftValue: expr("{{ String($('Gemini role agent — paid').item.json.statusCode || $('Gemini role agent — paid').item.json.httpCode || '') }}"), rightValue: '503', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ String($('Gemini role agent — paid').item.json.error?.message || $('Gemini role agent — paid').item.json.message || '') }}"), rightValue: 'UNAVAILABLE', operator: { type: 'string', operation: 'contains' } },
+  ] },
+} } });
+
+const failedSignal = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return traced Gemini failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: 'failed', type: 'string' },
+    { id: 'reason', name: 'reason', value: 'gemini_provider_failure', type: 'string' },
+    { id: 'attempt-id', name: 'attempt_id', value: expr("{{ $('Agent input').item.json.attempt_id }}"), type: 'string' },
+  ] } } },
+});
+
 export default workflow('qb3-invoke-gemini-attempt', 'Invoke Gemini agent attempt')
-  .add(input).to(reserve).to(reserved.onTrue(
-    gemini.to(succeeded
+  .add(input)
+  .to(reserve)
+  .to(existingReconciled
+    .onTrue(returnCached.to(stopDuplicateWorker))
+    .onFalse(reserved.onTrue(gemini.to(succeeded
       .onTrue(reconcile.to(parseAndValidate).to(schemaValid
         .onTrue(persist)
-        .onFalse(persistSchemaFailure.to(mayRepair
-          .onTrue(repair.to(returnRepaired))
-          .onFalse(repairFailed)
-        ))
-      ))
-      .onFalse(is503.onTrue(release503.to(retrySignal)).onFalse(unknown)))
-  ));
+        .onFalse(persistSchemaFailure.to(repairAllowed
+          .onTrue(repairMalformedOutput)
+          .onFalse(repairFailed)))))
+      .onFalse(is503
+        .onTrue(release503.to(persistProviderFailure).to(failedWas503
+          .onTrue(retrySignal)
+          .onFalse(failedSignal)))
+        .onFalse(unknown.to(persistProviderFailure)))))));

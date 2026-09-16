@@ -2,7 +2,7 @@ import { workflow, node, trigger, newCredential, expr, sticky } from '@n8n/workf
 
 const form = trigger({
   type: 'n8n-nodes-base.formTrigger', version: 2.4,
-  config: { name: 'Launch campaign form', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth') }, parameters: {
+  config: { name: 'Launch campaign form', credentials: { httpBasicAuth: newCredential('Question Bank v3 Operator Basic Auth', 'RhDqaHYrJyNybEEm') }, parameters: {
     authentication: 'basicAuth', formTitle: 'Question Bank v3 campaign',
     formDescription: 'Create a new empty-bank generation campaign. A campaign keeps running in internal batches until its accepted target or hard USD budget is reached.',
     formFields: { values: [

@@ -1,3 +1,9 @@
+\set ON_ERROR_STOP on
+
+-- Fresh-install snapshot. Existing installations apply the later numbered,
+-- idempotent migration files in order; those files intentionally repeat the
+-- latest definitions of functions that evolved after this snapshot shipped.
+
 begin;
 
 create extension if not exists vector;
@@ -174,6 +180,7 @@ create table qb3.provider_attempts (
   usage jsonb,
   sanitized_error jsonb,
   started_at timestamptz not null default now(),
+  lease_expires_at timestamptz not null default (now() + interval '30 minutes'),
   completed_at timestamptz
 );
 
@@ -233,6 +240,13 @@ create table qb3.workflow_errors (
   created_at timestamptz not null default now()
 );
 
+create table qb3.workflow_execution_context (
+  execution_id text primary key,
+  workflow_id text not null,
+  campaign_id text not null references qb3.campaigns(campaign_id) on delete restrict,
+  created_at timestamptz not null default now()
+);
+
 create index batches_campaign_idx on qb3.batches (campaign_id, batch_index);
 create index missions_campaign_batch_idx on qb3.missions (campaign_id, batch_id);
 create index candidates_campaign_state_idx on qb3.candidates (campaign_id, state, created_at);
@@ -246,6 +260,7 @@ create index provider_attempts_candidate_idx on qb3.provider_attempts (candidate
 create index agent_runs_campaign_started_idx on qb3.agent_runs (campaign_id, started_at);
 create index review_queue_open_idx on qb3.review_queue (created_at) where status = 'open';
 create index distribution_snapshots_campaign_idx on qb3.distribution_snapshots (campaign_id, created_at desc);
+create index workflow_execution_context_campaign_idx on qb3.workflow_execution_context (campaign_id, created_at desc);
 create index questions_embedding_hnsw_idx
   on qb3.questions using hnsw (embedding vector_cosine_ops);
 
@@ -402,6 +417,10 @@ begin
 
   if p_accepted_target <= 0 or p_authorized_budget_usd <= 0 then
     raise exception 'accepted target and authorized budget must be positive';
+  end if;
+
+  if p_level_mode = 'mixed' and mod(p_accepted_target, 2) <> 0 then
+    raise exception 'mixed accepted target must be even for an exact 50/50 split';
   end if;
 
   if p_level_mode = 'shallow' then
@@ -624,13 +643,34 @@ language plpgsql
 as $$
 declare
   v_mission_id uuid;
+  v_requested_mix jsonb;
+  v_expected_level text;
 begin
   if p_mission_slot not between 1 and 4 then
     raise exception 'mission slot must be between 1 and 4';
   end if;
 
-  if jsonb_typeof(p_questions) <> 'array' or jsonb_array_length(p_questions) <> 5 then
-    raise exception 'a Creative invocation must contain exactly five questions';
+  if jsonb_typeof(p_questions) <> 'array'
+     or jsonb_array_length(p_questions) not in (0, 5) then
+    raise exception 'mission persistence requires zero questions before Creative or exactly five afterward';
+  end if;
+
+  select b.requested_level_mix into v_requested_mix
+  from qb3.batches b
+  where b.batch_id = p_batch_id and b.campaign_id = p_campaign_id;
+
+  if not found then
+    raise exception 'batch % does not belong to campaign %', p_batch_id, p_campaign_id;
+  end if;
+
+  v_expected_level := case
+    when p_mission_slot <= coalesce((v_requested_mix ->> 'shallow')::integer, 0) / 5
+      then 'shallow' else 'deep' end;
+
+  if p_level <> v_expected_level
+     or (p_mission ->> 'mission_slot')::integer <> p_mission_slot
+     or p_mission ->> 'level' <> p_level then
+    raise exception 'mission slot %, level %, and requested level mix are inconsistent', p_mission_slot, p_level;
   end if;
 
   insert into qb3.missions (
@@ -643,6 +683,11 @@ begin
     set observation_report = excluded.observation_report,
         mission = excluded.mission
   returning qb3.missions.mission_id into v_mission_id;
+
+  if jsonb_array_length(p_questions) = 0 then
+    return query select v_mission_id, null::uuid, null::smallint, null::text;
+    return;
+  end if;
 
   insert into qb3.candidates (
     campaign_id, batch_id, mission_id, candidate_index,
@@ -704,13 +749,19 @@ begin
 
   select * into v_attempt
   from qb3.provider_attempts
-  where attempt_id = p_attempt_id;
+  where attempt_id = p_attempt_id
+  for update;
 
   if found then
     if v_attempt.campaign_id <> p_campaign_id
       or v_attempt.reservation_usd <> p_reservation_usd
       or v_attempt.agent_role <> p_agent_role
-      or v_attempt.requested_model <> p_requested_model then
+      or v_attempt.provider <> p_provider
+      or v_attempt.requested_model <> p_requested_model
+      or v_attempt.reasoning_setting <> p_reasoning_setting
+      or v_attempt.batch_id is distinct from p_batch_id
+      or v_attempt.candidate_id is distinct from p_candidate_id
+      or v_attempt.parent_attempt_id is distinct from p_parent_attempt_id then
       raise exception 'attempt id % reused with different parameters', p_attempt_id;
     end if;
     select jsonb_build_object(
@@ -724,6 +775,35 @@ begin
     into v_cached_result
     from qb3.agent_runs a
     where a.attempt_id = p_attempt_id;
+
+    -- A schema-failed base attempt may already have a successful repair child.
+    -- Resume must return the repaired original-role payload instead of launching
+    -- another provider call or replaying the stale schema failure.
+    if v_attempt.status = 'reconciled'
+       and v_cached_result ->> 'status' = 'schema_failed' then
+      select jsonb_build_object(
+        'invocation_id', repair_run.invocation_id,
+        'attempt_id', child.attempt_id,
+        'structured_response', repair_run.structured_response -> 'repaired_output',
+        'raw_response', repair_run.raw_response,
+        'status', 'succeeded',
+        'repair_of_invocation_id', base_run.invocation_id
+      )
+      into v_cached_result
+      from qb3.agent_runs base_run
+      join qb3.provider_attempts child
+        on child.parent_attempt_id = base_run.attempt_id
+       and child.status = 'reconciled'
+      join qb3.agent_runs repair_run
+        on repair_run.attempt_id = child.attempt_id
+       and repair_run.status = 'succeeded'
+      where base_run.attempt_id = p_attempt_id
+        and repair_run.structured_response ->> 'repairable' = 'true'
+        and repair_run.structured_response ->> 'original_schema_validated' = 'true'
+        and repair_run.structured_response ? 'repaired_output'
+      order by child.completed_at desc nulls last
+      limit 1;
+    end if;
 
     if v_cached_result is null
        and v_attempt.agent_role = 'embedding'
@@ -746,6 +826,66 @@ begin
       from qb3.candidates c
       where c.candidate_id = v_attempt.candidate_id
         and c.embedding is not null;
+    end if;
+
+    -- A fresh reservation may still belong to an in-flight worker. Do not
+    -- replay it and do not declare unknown spend until its lease expires.
+    if v_attempt.status = 'reserved' and v_cached_result is null then
+      if v_attempt.lease_expires_at > now() then
+        v_cached_result := jsonb_build_object(
+          'status', 'in_flight',
+          'attempt_id', p_attempt_id,
+          'structured_response', jsonb_build_object(
+            'status', 'pending',
+            'transport_status', 'in_flight',
+            'reason', 'provider_attempt_lease_active'
+          )
+        );
+
+        return query select false, 'attempt_in_flight',
+          v_campaign.authorized_budget_usd
+            - v_campaign.spent_usd
+            - v_campaign.reserved_usd
+            - v_campaign.unknown_spend_usd,
+          v_cached_result;
+        return;
+      end if;
+
+      -- Once the lease has expired, the provider may have accepted the request
+      -- before the worker crashed. Never replay it automatically, because that
+      -- could buy the same call twice.
+      update qb3.provider_attempts
+      set status = 'unknown_spend',
+          sanitized_error = jsonb_build_object(
+            'reason', 'recovered_reserved_attempt',
+            'message', 'Reserved provider attempt recovered without a durable result; automatic replay blocked'
+          ),
+          completed_at = now()
+      where attempt_id = p_attempt_id;
+
+      update qb3.campaigns
+      set reserved_usd = reserved_usd - v_attempt.reservation_usd,
+          unknown_spend_usd = unknown_spend_usd + v_attempt.reservation_usd,
+          status = 'unknown_spend'
+      where campaign_id = p_campaign_id;
+
+      v_cached_result := jsonb_build_object(
+        'status', 'unknown_spend',
+        'attempt_id', p_attempt_id,
+        'structured_response', jsonb_build_object(
+          'status', 'failed',
+          'transport_status', 'unknown_spend',
+          'reason', 'recovered_reserved_attempt'
+        )
+      );
+
+      return query select false, 'idempotent_unknown_spend',
+        v_campaign.authorized_budget_usd
+          - v_campaign.spent_usd
+          - v_campaign.unknown_spend_usd
+          - v_attempt.reservation_usd,
+        v_cached_result;
+      return;
     end if;
 
     return query select
@@ -1000,6 +1140,7 @@ language plpgsql
 as $$
 declare
   v_candidate qb3.candidates%rowtype;
+  v_campaign qb3.campaigns%rowtype;
   v_question_id uuid;
 begin
   select * into v_candidate
@@ -1027,6 +1168,24 @@ begin
 
   if v_candidate.embedding is null then
     return query select false, null::uuid, 'embedding_missing';
+    return;
+  end if;
+
+  select * into v_campaign
+  from qb3.campaigns
+  where campaign_id = v_candidate.campaign_id
+  for update;
+
+  if v_campaign.status <> 'running' or v_campaign.cancel_requested then
+    return query select false, null::uuid, 'campaign_not_accepting';
+    return;
+  end if;
+
+  if (v_candidate.level = 'shallow'
+      and v_campaign.accepted_shallow >= v_campaign.shallow_target)
+     or (v_candidate.level = 'deep'
+      and v_campaign.accepted_deep >= v_campaign.deep_target) then
+    return query select false, null::uuid, 'level_target_reached';
     return;
   end if;
 
@@ -1256,9 +1415,20 @@ as $$
 declare
   v_decision jsonb;
   v_candidate qb3.candidates%rowtype;
+  v_actual_count integer;
+  v_distinct_count integer;
 begin
   if jsonb_typeof(p_decisions) <> 'array' then
     raise exception 'quality decisions must be an array';
+  end if;
+
+  select count(*)::integer, count(distinct d.candidate_id)::integer
+  into v_actual_count, v_distinct_count
+  from (select (value ->> 'candidate_id')::uuid candidate_id
+        from jsonb_array_elements(p_decisions)) d;
+
+  if v_actual_count <> v_distinct_count then
+    raise exception 'quality decisions must not repeat candidate ids';
   end if;
 
   for v_decision in select value from jsonb_array_elements(p_decisions)
@@ -1267,10 +1437,13 @@ begin
     from qb3.candidates c
     where c.candidate_id = (v_decision ->> 'candidate_id')::uuid
       and c.batch_id = p_batch_id
+      and c.state = 'proposed'
+      and ((not p_escalation and c.quality_result is null)
+        or (p_escalation and c.quality_result ->> 'verdict' = 'uncertain'))
     for update;
 
     if not found then
-      raise exception 'quality decision references a candidate outside batch %', p_batch_id;
+      raise exception 'quality decision references an ineligible candidate in batch %', p_batch_id;
     end if;
 
     if v_decision ->> 'verdict' not in ('pass', 'reject', 'uncertain') then
@@ -1321,6 +1494,7 @@ as $$
   where c.batch_id = p_batch_id
     and c.state = 'proposed'
     and c.quality_result ->> 'verdict' = 'pass'
+    and c.embedding is null
   order by c.candidate_index;
 $$;
 
@@ -1432,7 +1606,12 @@ as $$
           from qb3.themes t where t.active)
   from qb3.candidates c
   join qb3.questions q using (candidate_id)
-  where c.batch_id = p_batch_id and c.metadata_result is null;
+  join qb3.batches b on b.batch_id = c.batch_id
+  join qb3.campaigns campaign on campaign.campaign_id = c.campaign_id
+  where c.batch_id = p_batch_id
+    and c.metadata_result is null
+    and campaign.status = 'running'
+    and not campaign.cancel_requested;
 $$;
 
 create or replace function qb3.apply_metadata_results(
@@ -1444,9 +1623,32 @@ language plpgsql
 as $$
 declare
   v_item jsonb;
+  v_expected_count integer;
+  v_actual_count integer;
+  v_distinct_count integer;
 begin
   if jsonb_typeof(p_items) <> 'array' then
     raise exception 'metadata items must be an array';
+  end if;
+
+  select count(*)::integer into v_expected_count
+  from qb3.candidates c
+  where c.batch_id = p_batch_id
+    and c.state = 'accepted'
+    and c.metadata_result is null;
+
+  v_actual_count := jsonb_array_length(p_items);
+  select count(distinct value ->> 'candidate_id')::integer
+  into v_distinct_count
+  from jsonb_array_elements(p_items);
+
+  if v_actual_count <> v_expected_count then
+    raise exception 'metadata item count % does not match expected accepted candidate count %',
+      v_actual_count, v_expected_count;
+  end if;
+
+  if v_distinct_count <> v_actual_count then
+    raise exception 'metadata items must contain each candidate id exactly once';
   end if;
 
   for v_item in select value from jsonb_array_elements(p_items)
@@ -1554,6 +1756,43 @@ begin
         then now() else c.completed_at end
   where c.campaign_id = v_campaign_id;
 
+  update qb3.candidates candidate
+  set state = 'operationally_unresolved',
+      rejection_reason_codes = jsonb_build_array(
+        case
+          when campaign.status = 'running' then 'level_target_reached'
+          else case campaign.status
+          when 'completed' then 'campaign_target_reached'
+          when 'cancelled_partial' then 'campaign_cancelled_before_candidate'
+          when 'budget_exhausted_partial' then 'campaign_budget_exhausted_before_candidate'
+          when 'unknown_spend' then 'campaign_stopped_for_unknown_spend'
+          when 'configuration_error' then 'campaign_configuration_error'
+          when 'database_error' then 'campaign_database_error'
+          when 'safety_ceiling_reached' then 'campaign_safety_ceiling_reached'
+          else 'campaign_stopped_before_candidate'
+          end
+        end
+      ),
+      feedback_note = case
+        when campaign.status = 'running' then 'The campaign target for this question level was reached before this candidate was needed.'
+        else case campaign.status
+        when 'completed' then 'Campaign target was reached before this candidate was needed.'
+        when 'cancelled_partial' then 'Campaign was cancelled before this candidate was processed.'
+        when 'budget_exhausted_partial' then 'Campaign budget was exhausted before this candidate was processed.'
+        else 'Campaign stopped before this candidate was processed.'
+        end
+      end,
+      updated_at = now()
+  from qb3.campaigns campaign
+  where candidate.campaign_id = v_campaign_id
+    and campaign.campaign_id = candidate.campaign_id
+    and (
+      campaign.status <> 'running'
+      or (candidate.level = 'shallow' and campaign.accepted_shallow >= campaign.shallow_target)
+      or (candidate.level = 'deep' and campaign.accepted_deep >= campaign.deep_target)
+    )
+    and candidate.state = 'proposed';
+
   v_snapshot_id := qb3.refresh_distribution_snapshot(v_campaign_id, p_batch_id);
 
   return query
@@ -1579,7 +1818,7 @@ begin
   with recent_batches as (
     select b.batch_id
     from qb3.batches b
-    where b.status = 'completed'
+    where b.status = 'completed' and b.campaign_id = p_campaign_id
     order by b.completed_at desc nulls last
     limit 5
   ), recent_candidates as (
@@ -1619,8 +1858,10 @@ begin
     'without_theme', (select count(*) from qb3.questions q
       where not exists (select 1 from qb3.question_themes qt where qt.question_id = q.question_id)),
     'theme_combinations', coalesce((select jsonb_agg(to_jsonb(combo) order by combo.question_count desc, combo.theme_codes)
-      from (select array_agg(qt.theme_code order by qt.theme_code) theme_codes, count(*) question_count
-            from qb3.question_themes qt group by qt.question_id) combo), '[]'::jsonb),
+      from (select theme_codes, count(*) question_count from (
+              select array_agg(qt.theme_code order by qt.theme_code) theme_codes
+              from qb3.question_themes qt group by qt.question_id
+            ) per_question group by theme_codes) combo), '[]'::jsonb),
     'representative_recent_accepted', coalesce((select jsonb_agg(to_jsonb(r) order by r.accepted_at desc)
       from (select q.question_id, q.question_text, q.level, q.question_form, q.accepted_at
             from qb3.questions q order by q.accepted_at desc limit 20) r), '[]'::jsonb),

@@ -9,7 +9,7 @@ const input = trigger({
 
 const read = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Read newly accepted questions and themes', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Read newly accepted questions and themes', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery', query: 'select * from qb3.get_metadata_group($1::uuid);',
     options: { queryReplacement: expr("{{ [$('Metadata stage input').item.json.batch_id] }}") },
   } },
@@ -43,12 +43,13 @@ const metadata = node({
 const metadataOk = ifElse({ version: 2.3, config: { name: 'Metadata output usable?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'succeeded', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ (() => { const expected = ($('Read newly accepted questions and themes').item.json.questions || []).map(q => String(q.candidate_id)).sort(); const actual = ($json.structured_response?.items || []).map(i => String(i.candidate_id)).sort(); return actual.length === new Set(actual).size && expected.length === actual.length && expected.every((id, index) => id === actual[index]); })() }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ],
 } } } });
 
 const apply = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Apply themes and metadata', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Apply themes and metadata', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery', query: 'select * from qb3.apply_metadata_results($1::uuid, $2::jsonb);',
     options: { queryReplacement: expr("{{ [$('Metadata stage input').item.json.batch_id, JSON.stringify($('7. Theme and Metadata Agent').item.json.structured_response.items)] }}") },
   } },
@@ -62,10 +63,19 @@ const done = node({
   ] } } },
 });
 
+const deferred = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Metadata deferred', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'status', name: 'status', value: 'metadata_deferred', type: 'string' },
+    { id: 'batch', name: 'batch_id', value: expr("{{ $('Metadata stage input').item.json.batch_id }}"), type: 'string' },
+    { id: 'reason', name: 'reason', value: 'metadata_output_incomplete_or_unavailable', type: 'string' },
+  ] } } },
+});
+
 const note = sticky('## Post-admission metadata\nThemes and dimensions are assigned only after semantic admission. Metadata can never change the admission decision. If the metadata provider is unavailable, accepted questions remain accepted and can be backfilled later.', [read, metadata, apply], { color: 2 });
 
 export default workflow('qb3-metadata-stage', 'Assign Question Bank batch metadata')
   .add(input).to(read).to(hasQuestions
-    .onTrue(metadata.to(metadataOk.onTrue(apply.to(done)).onFalse(done)))
+    .onTrue(metadata.to(metadataOk.onTrue(apply.to(done)).onFalse(deferred)))
     .onFalse(done))
   .add(note);

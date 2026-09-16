@@ -1,14 +1,26 @@
 # Question Bank v3: n8n migration plan
 
-Status: implementation complete as an inactive draft. Database contracts,
+Status: **implemented and cut over on 2026-09-15**. The shared error recorder,
+internal subworkflows, and authenticated operator workflows are active. Database contracts,
 prompt and runtime registries, provider-attempt runtimes, explicit fallback and
 retry paths, role wrappers, full campaign and batch orchestration, campaign
-controls, CSV export, and the shared error-handler draft have been created. All
-38 checked-in workflow definitions pass n8n SDK validation, saved connections
+controls, CSV export, and the shared error handler have been created. All
+38 checked-in workflow definitions (247 nodes) pass n8n SDK validation, saved connections
 for the new orchestration workflows were read back and inspected, and the SQL
-contract suite passes. Credential binding, pinned non-paid execution tests,
-shared error-handler publication/attachment, and the explicitly authorized paid
-qualification campaign remain before production cutover.
+contract suite passes. The five required credentials are created and all 47
+credential-bearing live nodes are bound to their exact credential IDs. The
+non-paid pinned path matrix passes and its execution evidence is recorded in
+`n8n/question-bank-v3/PINNED_TEST_REPORT.md`. The shared error handler is
+published and attached to all 37 other live Question Bank v3 workflows. The
+first paid qualification failed manual content review because same-batch
+neighbour snapshots allowed repetitive clusters. The semantic stage now
+refreshes neighbours before every candidate; two stricter follow-up campaigns
+leave 18 manually retained questions in the authoritative v3 bank and satisfy
+the structural qualification checks. Provider-attempt workflows include the
+guarded Repair-agent call. Pinned recursion-stop tests and a real Gemini
+repair-provider qualification pass. The final publication and saved-graph audit
+passed; n8n is the sole production owner for new campaigns. See
+`n8n/question-bank-v3/PAID_QUALIFICATION_REPORT.md`.
 
 This plan replaces the proposed ADK production path for new Question Bank
 generation. It also supersedes the earlier n8n feasibility recommendation that
@@ -82,7 +94,7 @@ flowchart TD
     Q --> X[Exact normalized duplicate check]
     X --> E[Embed each surviving candidate once]
     E --> N[Retrieve up to 10 nearest accepted questions]
-    N --> SJ[Semantic Judge<br/>candidate batches of 5]
+    N --> SJ[Semantic Judge<br/>one candidate with a fresh top 10]
     SJ --> A[Deterministic admission]
     A -->|Duplicate or quality failure| R[Record rejection feedback]
     A -->|Uncertain| H[Human-review queue]
@@ -114,6 +126,8 @@ All workflows live in one Question Bank folder/project and use the tags
      or `mixed`), budget USD, and optional notes.
    - For `mixed`, the accepted target is split exactly 50/50. After one level
      reaches its target, subsequent batches generate only the missing level.
+     Odd mixed targets are rejected because they cannot satisfy an exact 50/50
+     contract.
    - Orchestrates batches until a stop condition is reached.
 
 2. **Control Question Bank campaign**
@@ -164,11 +178,14 @@ failure is preserved as `schema_failed`, then routed through a separately
 reserved same-provider repair invocation with an explicit trace relationship.
 Repair output is unwrapped back into the original role contract; a malformed
 Repair Agent response becomes operationally unresolved rather than recursing.
-The paid qualification gate must still exercise this branch before cutover; no
-hidden provider retry is permitted.
+The repaired payload is validated again against the failed role's original
+schema before it can be returned. The paid qualification exercised this branch;
+no hidden provider retry is permitted.
 
 One reusable Creative Agent subworkflow is called once for each of four
-missions. Do not duplicate four Creative workflow definitions.
+missions. Each mission is persisted before its provider call, so every Creative
+trace carries a durable `mission_id`, even if the call fails. Do not duplicate
+four Creative workflow definitions.
 
 ### Deterministic/stateful subworkflows
 
@@ -293,8 +310,9 @@ reason codes and summarized for the next Observation invocation.
 4. Search pgvector across all accepted questions, without a theme filter.
 5. Retrieve up to 10 nearest questions. An empty new bank simply returns fewer
    neighbours, including zero.
-6. Send candidates to Semantic Judge in groups of five. Each candidate retains
-   its own neighbour list and independent verdict.
+6. Process candidates one at a time. Immediately before each Semantic Judge
+   call, query its current top 10 so questions accepted earlier in the same
+   campaign are visible.
 7. Semantic Judge returns exactly `duplicate`, `distinct`, or `uncertain`, plus
    matched IDs, dimension relations, stable reason codes, and a concise feedback
    note.
@@ -316,6 +334,10 @@ it. This replaces exhaustive pair scans and eliminates `pair_overflow`.
 Metadata runs only after admission and cannot reverse admission. A question may
 receive zero, one, or multiple equal theme memberships. There is no primary
 theme and no forced assignment.
+
+Metadata is applied atomically only when the agent returns each newly accepted
+candidate ID exactly once. Missing, duplicate, or foreign IDs defer the whole
+metadata group for later backfill; partial metadata is never silently stored.
 
 The initial named themes are:
 
@@ -393,6 +415,16 @@ PostgreSQL stores a durable `agent_runs` record for every invocation:
 - fallback and repair relationships;
 - start time, duration, status, and sanitized error.
 
+For language-model roles, `raw response` is the credential-free provider body.
+For embeddings, the trace intentionally stores only model, usage, transport
+outcome, and returned neighbour evidence; the 1536-number vector is stored once
+on the candidate rather than duplicated into `agent_runs`.
+
+Definite and ambiguous provider failures are traced too, including the fully
+rendered prompt, raw transport result, and a durable retry classification.
+Resuming a released or reconciled attempt returns that trace instead of buying
+the same attempt again.
+
 n8n's execution inspector provides the visual input/output view. PostgreSQL
 preserves the same evidence beyond n8n execution retention. Neither store may
 contain API keys, transport headers, or private chain-of-thought.
@@ -423,7 +455,10 @@ Initial tables are:
 - `prompt_snapshots`: immutable campaign configuration;
 - `review_queue`: uncertain question-specific decisions; and
 - `distribution_snapshots`: frozen all-time and recent summaries consumed by
-  Observation.
+  Observation; recent evidence is scoped to the active campaign and theme
+  combinations are aggregated by the complete sorted membership set; and
+- `workflow_execution_context`: the campaign owning each asynchronous worker
+  execution, used by the shared error handler to stop the correct campaign.
 
 Database constraints enforce unique campaign IDs, unique attempt IDs, unique
 normalized accepted text, and one accepted question per candidate. Admission
@@ -446,6 +481,10 @@ The provider is called only after reservation succeeds. Afterwards:
 - an ambiguous transport result moves it to `unknown_spend_usd` and stops the
   campaign.
 
+Reservations cover the declared maximum input and output tokens for the most
+expensive model in each explicit waterfall. The three generative Gemini roles
+reserve `$0.028` per attempt against a `$0.02736` declared worst case.
+
 Every attempt has an idempotent `attempt_id`. Native retry-on-fail is disabled
 for paid AI and embedding nodes because hidden retries would bypass reservation
 and tracing. Retry and fallback nodes are explicit in the canvas.
@@ -453,6 +492,9 @@ When an already completed attempt is encountered after resume, the reservation
 contract returns its persisted structured result to the caller and does not
 invoke the provider again. Completed embedding attempts return neighbours from
 the stored candidate vector rather than purchasing another embedding.
+An uncompleted reservation keeps a 30-minute execution lease: duplicate
+workers receive `in_flight` and cannot replay or abandon it. Only an expired
+lease with no durable trace is converted to `unknown_spend`.
 
 Budget exhaustion preserves all completed work and finishes the campaign as
 `budget_exhausted_partial`. It never deletes accepted questions or fabricates
@@ -486,6 +528,12 @@ possible so their attempt state and campaign consequence remain explicit.
 3. Create and bind native n8n credentials for PostgreSQL, OpenAI, and Gemini.
 4. Create the prompt registry and initial immutable prompt versions.
 5. Create the shared production error workflow.
+
+Fresh local volumes receive the numbered SQL files through PostgreSQL init.
+Existing volumes must run `n8n/question-bank-v3/scripts/apply-sql-migrations.sh`;
+the runner discovers `POSTGRES_USER` and `POSTGRES_DB` from the running
+container, honors `QB3_POSTGRES_USER` and `QB3_POSTGRES_DB` overrides, and
+records each applied upgrade in `qb3.schema_migrations`.
 
 ### Phase 2: reusable subworkflows
 

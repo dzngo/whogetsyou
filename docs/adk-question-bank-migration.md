@@ -1,8 +1,14 @@
 # ADK migration for Question Bank enrichment
 
+> **Superseded on 2026-09-15.** This document is retained as historical v2/v2.1
+> architecture. The validated n8n Question Bank v3 workflows are the sole
+> production path for new campaigns. The ADK Web entry point is disabled by
+> default and requires `QUESTION_BANK_ENABLE_LEGACY_ADK=1` for explicit legacy
+> recovery.
+
 ## Outcome
 
-Google ADK 2 is the only orchestration path for new Question Bank campaigns.
+Google ADK 2 was the orchestration path for legacy Question Bank campaigns.
 ADK Web and the CLI invoke the same explicit graph. Existing Python modules remain
 authoritative for provider calls, budgets, persistence, semantic and quality
 rules, admission, review allocation, metadata, and exports. Historical unfinished

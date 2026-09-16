@@ -71,7 +71,7 @@ const primary = node({
 });
 const primaryFailed = ifElse({ version: 2.3, config: { name: 'Primary returned a definite retryable failure?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Primary OpenAI attempt').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Primary OpenAI attempt').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const retry = node({
@@ -121,7 +121,7 @@ const retry = node({
 });
 const retryFailed = ifElse({ version: 2.3, config: { name: 'Retry failed definitely?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ $('Explicit same-model OpenAI retry').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'equals' } },
+    { leftValue: expr("{{ $('Explicit same-model OpenAI retry').item.json.status || '' }}"), rightValue: 'retryable_failure', operator: { type: 'string', operation: 'notEquals' } },
   ],
 } } } });
 const unresolved = node({
@@ -133,4 +133,4 @@ const unresolved = node({
   ] } } },
 });
 export default workflow('qb3-invoke-openai-retry', 'Invoke OpenAI agent with explicit retry')
-  .add(input.to(loadPrompt).to(primary).to(primaryFailed.onTrue(retry.to(retryFailed.onTrue(unresolved)))));
+  .add(input.to(loadPrompt).to(primary).to(primaryFailed.onFalse(retry.to(retryFailed.onFalse(unresolved)))));

@@ -7,13 +7,21 @@ const failure = trigger({
 
 const persist = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Persist sanitized failure', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Persist sanitized failure', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
-    query: `insert into qb3.workflow_errors (
+    query: `with context as materialized (
+      select campaign_id from qb3.workflow_execution_context where execution_id = $2
+    ), stopped as (
+      update qb3.campaigns set status = 'database_error', completed_at = now()
+      where campaign_id = (select campaign_id from context) and status = 'running'
+      returning campaign_id
+    )
+    insert into qb3.workflow_errors (
       campaign_id, workflow_id, execution_id, node_name, sanitized_error
     ) values (
-      null, $1, $2, $3, jsonb_build_object('name', $4, 'message', $5)
-    ) returning workflow_error_id, created_at;`,
+      (select campaign_id from context), $1, $2, $3,
+      jsonb_build_object('name', $4, 'message', $5, 'campaign_stopped', exists(select 1 from stopped))
+    ) returning workflow_error_id, campaign_id, created_at;`,
     options: { queryReplacement: expr("{{ [$('Question Bank workflow failed').item.json.workflow?.id || '', $('Question Bank workflow failed').item.json.execution?.id || '', $('Question Bank workflow failed').item.json.execution?.lastNodeExecuted || '', $('Question Bank workflow failed').item.json.execution?.error?.name || 'WorkflowError', $('Question Bank workflow failed').item.json.execution?.error?.message || 'Unknown workflow error'] }}") },
   } },
 });

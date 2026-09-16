@@ -1,4 +1,4 @@
-import { workflow, node, trigger, newCredential, expr, ifElse } from '@n8n/workflow-sdk';
+import { workflow, node, trigger, newCredential, expr, ifElse, sticky } from '@n8n/workflow-sdk';
 
 const input = trigger({
   type: 'n8n-nodes-base.executeWorkflowTrigger', version: 1.2,
@@ -40,14 +40,47 @@ const reserve = node({
 
 const reserved = ifElse({ version: 2.3, config: { name: 'Reservation succeeded?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr('{{ $json.reserved }}'), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+    { leftValue: expr("{{ $('Reserve embedding budget').item.json.reserved }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ] },
 } } });
+
+const existingResult = ifElse({ version: 2.3, config: { name: 'Existing traced embedding?', parameters: {
+  conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr("{{ $('Reserve embedding budget').item.json.status || '' }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+  ] },
+} } });
+
+const returnCached = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return cached embedding result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'cached-status', name: 'status', type: 'string', value: expr("{{ $('Reserve embedding budget').item.json.structured_response?.transport_status || $('Reserve embedding budget').item.json.structured_response?.status || $('Reserve embedding budget').item.json.status }}") },
+    { id: 'cached-candidate', name: 'candidate_id', type: 'string', value: expr("{{ $('Reserve embedding budget').item.json.structured_response?.candidate_id || $('Reserve embedding budget').item.json.candidate_id || $('Input').item.json.candidate_id }}") },
+    { id: 'cached-neighbours', name: 'neighbours', type: 'array', value: expr("{{ $('Reserve embedding budget').item.json.structured_response?.neighbours || $('Reserve embedding budget').item.json.neighbours || null }}") },
+  ] } } },
+});
+
+const stopDuplicateWorker = node({
+  type: 'n8n-nodes-base.filter', version: 2.3,
+  config: { name: 'Stop duplicate worker while lease is active', parameters: { conditions: {
+    options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 }, combinator: 'and', conditions: [
+      { leftValue: expr("{{ $('Return cached embedding result').item.json.status || '' }}"), rightValue: 'in_flight', operator: { type: 'string', operation: 'notEquals' } },
+    ],
+  } } },
+});
+
+const returnUnavailable = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return embedding reservation failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'unavailable-status', name: 'status', value: 'failed', type: 'string' },
+    { id: 'unavailable-reason', name: 'reason', value: expr("{{ $('Reserve embedding budget').item.json.reason || 'embedding_budget_unavailable' }}"), type: 'string' },
+    { id: 'unavailable-candidate', name: 'candidate_id', value: expr("{{ $('Input').item.json.candidate_id }}"), type: 'string' },
+  ] } } },
+});
 
 const embed = node({
   type: 'n8n-nodes-base.httpRequest', version: 4.4,
   config: { name: 'OpenAI embedding — paid', onError: 'continueRegularOutput', credentials: {
-    httpTemplatedCustomAuth: newCredential('Question Bank v3 OpenAI HTTP'),
+    httpTemplatedCustomAuth: newCredential('Question Bank v3 OpenAI HTTP', 'znA69osGbjXZQJsa'),
   }, parameters: {
     method: 'POST', url: 'https://api.openai.com/v1/embeddings',
     authentication: 'genericCredentialType', genericAuthType: 'httpTemplatedCustomAuth',
@@ -59,13 +92,13 @@ const embed = node({
 
 const succeeded = ifElse({ version: 2.3, config: { name: 'Embedding succeeded?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr('{{ $json.statusCode }}'), rightValue: 200, operator: { type: 'number', operation: 'equals' } },
+    { leftValue: expr("{{ $('OpenAI embedding — paid').item.json.statusCode }}"), rightValue: 200, operator: { type: 'number', operation: 'equals' } },
   ] },
 } } });
 
 const hasStatus = ifElse({ version: 2.3, config: { name: 'Provider returned HTTP status?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ String($json.statusCode || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+    { leftValue: expr("{{ String($('OpenAI embedding — paid').item.json.statusCode || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
   ] },
 } } });
 
@@ -89,7 +122,7 @@ const reconcile = node({
 
 const storeAndFind = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Store vector and retrieve top 10', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Store vector and retrieve top 10', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.store_candidate_embedding_and_find($1::uuid, $2::vector);',
     options: { queryReplacement: expr("{{ [$('Input').item.json.candidate_id, JSON.stringify($('OpenAI embedding — paid').item.json.body.data[0].embedding)] }}") },
@@ -124,11 +157,57 @@ const unknown = node({
   } },
 });
 
+const persistTrace = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Persist embedding invocation trace', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select * from qb3.persist_agent_run($1,$2,$3,$4::uuid,$5::uuid,null::uuid,'embedding','embedding','v1',$6,$7,$8::jsonb,$9,null);",
+    options: { queryReplacement: expr("{{ (() => { const response = $('OpenAI embedding — paid').item.json; const ok = response.statusCode === 200; const stored = ok ? $('Store vector and retrieve top 10').item.json : {}; return [$('Input').item.json.attempt_id, $('Input').item.json.attempt_id, $('Input').item.json.campaign_id, $('Input').item.json.batch_id, $('Input').item.json.candidate_id, $('Input').item.json.question_text, JSON.stringify({ statusCode: response.statusCode || null, model: response.body?.model || 'text-embedding-3-small', usage: response.body?.usage || {}, error: response.body?.error || response.error || response.message || null }), JSON.stringify(ok ? { status: 'succeeded', candidate_id: stored.candidate_id, neighbours: stored.neighbours || [] } : { status: 'failed', candidate_id: $('Input').item.json.candidate_id, transport_status: String(response.statusCode || '') ? 'retryable_failure' : 'failed' }), ok ? 'succeeded' : 'failed']; })() }}") },
+  } },
+});
+
+const traceSucceeded = ifElse({ version: 2.3, config: { name: 'Traced embedding succeeded?', parameters: {
+  conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr("{{ $('OpenAI embedding — paid').item.json.statusCode }}"), rightValue: 200, operator: { type: 'number', operation: 'equals' } },
+  ] },
+} } });
+
+const returnStored = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return stored embedding result', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'stored-status', name: 'status', value: 'succeeded', type: 'string' },
+    { id: 'stored-candidate', name: 'candidate_id', value: expr("{{ $('Store vector and retrieve top 10').item.json.candidate_id }}"), type: 'string' },
+    { id: 'stored-neighbours', name: 'neighbours', value: expr("{{ $('Store vector and retrieve top 10').item.json.neighbours || [] }}"), type: 'array' },
+  ] } } },
+});
+
+const returnFailure = node({
+  type: 'n8n-nodes-base.set', version: 3.5,
+  config: { name: 'Return traced embedding failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
+    { id: 'failed-status', name: 'status', value: 'failed', type: 'string' },
+    { id: 'failed-reason', name: 'reason', value: expr("{{ String($('OpenAI embedding — paid').item.json.statusCode || '') ? 'embedding_provider_failure' : 'embedding_transport_unknown' }}"), type: 'string' },
+    { id: 'failed-candidate', name: 'candidate_id', value: expr("{{ $('Input').item.json.candidate_id }}"), type: 'string' },
+  ] } } },
+});
+
+const note = sticky('## Idempotent paid embedding\nReserve before calling OpenAI. A completed attempt returns its persisted result; a duplicate worker stops while the original lease is active; every provider success or failure is traced before returning to the caller.', [reserve, existingResult, embed, persistTrace, returnCached, stopDuplicateWorker, returnFailure], { color: 4 });
+
 export default workflow('qb3-embed-retrieve', 'Embed and retrieve neighbours')
   .add(input)
   .to(reserve)
-  .to(reserved.onTrue(
-    embed.to(succeeded
-      .onTrue(reconcile.to(storeAndFind))
-      .onFalse(hasStatus.onTrue(release).onFalse(unknown)))
-  ));
+  .to(existingResult
+    .onTrue(returnCached.to(stopDuplicateWorker))
+    .onFalse(reserved
+      .onTrue(embed.to(succeeded
+        .onTrue(reconcile.to(storeAndFind).to(persistTrace).to(traceSucceeded
+          .onTrue(returnStored)
+          .onFalse(returnFailure)))
+        .onFalse(hasStatus
+          .onTrue(release.to(persistTrace).to(traceSucceeded
+            .onTrue(returnStored)
+            .onFalse(returnFailure)))
+          .onFalse(unknown.to(persistTrace).to(traceSucceeded
+            .onTrue(returnStored)
+            .onFalse(returnFailure))))))
+      .onFalse(returnUnavailable)))
+  .add(note);

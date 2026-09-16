@@ -1,4 +1,4 @@
-"""ADK Web entry point for the production Question Bank workflow."""
+"""Legacy ADK Web entry point for historical Question Bank v2/v2.1 work."""
 
 from __future__ import annotations
 
@@ -15,6 +15,13 @@ from question_bank.semantic import FastEmbedAdapter
 
 
 load_dotenv(Path.cwd() / ".env")
+if os.environ.get("QUESTION_BANK_ENABLE_LEGACY_ADK", "").strip() != "1":
+    raise RuntimeError(
+        "The legacy ADK Question Bank entry point is disabled. "
+        "Question Bank v3 is operated through the n8n Run, Control, and Export workflows. "
+        "Set QUESTION_BANK_ENABLE_LEGACY_ADK=1 only for explicit historical v2/v2.1 recovery."
+    )
+
 _root = Path(os.environ.get("QUESTION_BANK_ROOT", "storage/question_bank_v2.1"))
 _configuration_manifest = _configuration()
 backend = ProductionWorkflowBackend(

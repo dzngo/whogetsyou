@@ -12,7 +12,7 @@ const input = trigger({
 
 const query = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Persist mission and five candidates', credentials: { postgres: newCredential('Question Bank v3 Postgres') }, parameters: {
+  config: { name: 'Persist mission and optional candidates', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.persist_mission_and_candidates($1, $2::uuid, $3::integer, $4, $5::jsonb, $6::jsonb, $7::jsonb);',
     options: { queryReplacement: expr("{{ [$('Input').item.json.campaign_id, $('Input').item.json.batch_id, $('Input').item.json.mission_slot, $('Input').item.json.level, JSON.stringify($('Input').item.json.observation_report || {}), JSON.stringify($('Input').item.json.mission || {}), JSON.stringify($('Input').item.json.questions)] }}") },
