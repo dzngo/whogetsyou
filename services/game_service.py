@@ -71,6 +71,7 @@ class GameService:
             "question_preference_history": {},
             "consecutive_question_skips": 0,
             "assisted_candidate_ids": [],
+            "assisted_retry_after_skip": 5,
             "confirmed_question_ids": [],
             "saved_questions_by_player": {},
             "question_events_pending": [],
@@ -103,6 +104,7 @@ class GameService:
         state["question_autogen_attempted"] = False
         state["consecutive_question_skips"] = 0
         state["assisted_candidate_ids"] = []
+        state["assisted_retry_after_skip"] = 5
         state["question_candidates"] = []
         state["current_candidate_index"] = 0
         state["answer_submissions"] = {}

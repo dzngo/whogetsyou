@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import html
+import logging
 import random
 import uuid
 from fractions import Fraction
@@ -27,6 +28,9 @@ from services.question_bank import (
 )
 from storage.question_events import QuestionEvents
 from ui import common
+
+
+logger = logging.getLogger(__name__)
 
 
 class GameFlow:
@@ -156,6 +160,7 @@ class GameFlow:
         state["question_autogen_attempted"] = False
         state["consecutive_question_skips"] = 0
         state["assisted_candidate_ids"] = []
+        state["assisted_retry_after_skip"] = 5
         state["question_candidates"] = []
         state["current_candidate_index"] = 0
         question_key = f"{room.room_code}_question_text"
@@ -343,6 +348,8 @@ class GameFlow:
                 st.markdown(f"**Current question:** {question_data.get('question')}")
                 if question_data.get("translation_fallback"):
                     st.warning("Translation could not preserve the player names. This question is shown in English.")
+                if question_data.get("assisted_sampling_unavailable"):
+                    st.caption("Personalized selection is temporarily unavailable; showing a random question.")
 
         manual_key = f"{room.room_code}_question_text"
         prefill_key = f"{manual_key}_prefill"
@@ -1471,8 +1478,11 @@ class GameFlow:
         eligible_by_id = {item["id"]: item for item in eligible}
         candidate = None
         assisted_ids = [qid for qid in state.get("assisted_candidate_ids", []) if qid in eligible_by_id]
-        if int(state.get("consecutive_question_skips", 0)) >= 5 and eligible:
-            if not assisted_ids:
+        skip_count = int(state.get("consecutive_question_skips", 0))
+        retry_after = int(state.get("assisted_retry_after_skip", 5))
+        assisted_unavailable = skip_count >= 5 and skip_count < retry_after and not assisted_ids
+        if skip_count >= 5 and eligible:
+            if not assisted_ids and skip_count >= retry_after:
                 bank_by_id = {item["id"]: item for item in bank}
                 history = [
                     {"action": item["action"], "question": bank_by_id[item["question_id"]]["text"]}
@@ -1482,9 +1492,15 @@ class GameFlow:
                 try:
                     ranked = assisted_candidates(theme, level, history, eligible)
                     assisted_ids = list(dict.fromkeys(qid for qid in ranked if qid in eligible_by_id))[:5]
-                except Exception:
-                    # A failed AI request never prevents normal gameplay.
+                    if not assisted_ids:
+                        raise ValueError("No eligible assisted questions returned")
+                except Exception as exc:
+                    # Log the failure category, never provider errors, question text, or credentials.
+                    logger.warning("Assisted selection unavailable (%s); retrying after five more skips.",
+                                   type(exc).__name__)
                     assisted_ids = []
+                    assisted_unavailable = True
+                    state["assisted_retry_after_skip"] = skip_count + 5
             if assisted_ids:
                 candidate = eligible_by_id[assisted_ids[0]]
         if candidate is None:
@@ -1536,6 +1552,7 @@ class GameFlow:
             "question_en": question_en,
             "source": "bank",
             "translation_fallback": translation_fallback,
+            "assisted_sampling_unavailable": assisted_unavailable,
         }
         if storyteller and "[STORYTELLER]" in (candidate.get("display_template") or candidate["text"]):
             state["question"]["placeholder_storyteller_name"] = storyteller.name
@@ -1557,8 +1574,7 @@ class GameFlow:
             return
         try:
             events = QuestionEvents()
-            for event in pending:
-                events.record(event)
+            events.record_many(pending)
         except Exception:
             st.warning("Question statistics could not be saved yet; they will be retried.")
             return
