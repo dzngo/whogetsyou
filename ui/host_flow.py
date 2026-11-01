@@ -60,9 +60,7 @@ class HostFlow:
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "host_name":
-            self._render_host_name()
-        elif step == "room_name":
+        if step in ("host_name", "room_name"):
             self._render_room_name()
         elif step == "existing_room_decision":
             self._render_existing_room_decision()
@@ -75,27 +73,10 @@ class HostFlow:
             self.reset()
             common.rerun()
 
-    def _render_host_name(self) -> None:
-        state = self.state
-        st.subheader("Your name")
-        host_name = st.text_input("Host name", value=state["host_name"])
-        col1, col2 = st.columns(2)
-        if col1.button("Back", key="host_name_back"):
-            self.reset()
-            st.session_state["route"] = "entry"
-            common.rerun()
-        if col2.button("Next", key="host_name_next"):
-            cleaned = host_name.strip()
-            if not cleaned:
-                st.error("Please enter your name.")
-                return
-            state["host_name"] = cleaned
-            state["step"] = "room_name"
-            common.rerun()
-
     def _render_room_name(self) -> None:
         state = self.state
         st.subheader("Room setup")
+        host_name = st.text_input("Your name", value=state["host_name"])
         name = st.text_input("Room name", value=state["room_name"])
         is_private = st.checkbox("Private room", value=bool(state.get("is_private", False)))
         help_text = (
@@ -106,13 +87,19 @@ class HostFlow:
         st.caption(help_text)
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
-            state["step"] = "host_name"
+            self.reset()
+            st.session_state["route"] = "entry"
             common.rerun()
         if col2.button("Next", key="room_name_next"):
+            cleaned_host = host_name.strip()
+            if not cleaned_host:
+                st.error("Please enter your name.")
+                return
             cleaned = name.strip()
             if not cleaned:
                 st.error("Please enter a room name.")
                 return
+            state["host_name"] = cleaned_host
             state["room_name"] = cleaned
             state["is_private"] = is_private
             existing = self.room_service.get_room_by_name(cleaned)
@@ -250,6 +237,10 @@ class HostFlow:
                 suffix = " (Host)" if player.role == PlayerRole.HOST else ""
                 st.write(f"- {player.name}{suffix}")
 
+        default_score = 10 if len(room.players) == 2 else 100
+        if not room.settings.max_score_customized and room.settings.max_score != default_score:
+            self.room_service.update_max_score(room, default_score, customized=False)
+            st.session_state["host_lobby_max_score"] = default_score
         st.markdown("### Game settings")
         with st.container(border=True):
             score = st.number_input(
@@ -282,9 +273,9 @@ class HostFlow:
             else:
                 st.caption("No players to remove.")
 
-        can_start = len(room.players) >= 3
+        can_start = len(room.players) >= 2
         if not can_start:
-            st.warning("At least three players are required to start the game.")
+            st.warning("At least two players are required to start the game.")
         else:
             if st.button("Start game"):
                 try:
@@ -318,6 +309,7 @@ class HostFlow:
         max_score = existing_room.settings.max_score if existing_room else 100
         return RoomSettings(
             max_score=max_score,
+            max_score_customized=existing_room.settings.max_score_customized if existing_room else False,
             language=state.get("language", "en"),
             llm_model=state.get("llm_model", "gemini-2.5-flash"),
         )

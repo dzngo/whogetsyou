@@ -57,7 +57,8 @@ def show_room_summary(room: Room, display_llm: bool = False) -> None:
         with columns[1]:
             st.write("**Theme selection:** Dynamic (Storyteller picks each round)")
             st.write("**Level selection:** Dynamic (Shallow/Deep)")
-            st.write("**Gameplay mode:** Standard")
+            mode = (room.game_state or {}).get("game_mode") if room.started else ("two_player" if len(room.players) == 2 else "standard")
+            st.write(f"**Gameplay mode:** {'Two players' if mode == 'two_player' else 'Standard'}")
 
 
 def room_join_label(room: Room) -> str:
@@ -79,6 +80,8 @@ def style_buttons() -> None:
           const aiColor = '#ea8600';
           const magicColor = '#a73ac9';
           const loveColor = '#cd0487' ;
+          const savedColor = '#6b7280';
+          const editColor = '#795548';
           const paint = () => {
             const buttons = root.querySelectorAll('button');
             buttons.forEach((btn) => {
@@ -88,8 +91,11 @@ def style_buttons() -> None:
               if (['end game', 'force reveal'].includes(label)) {
                 bg = warnColor;
               } else if (
+                label === 'not quite' ||
                 label.includes('back') || 
                 label.includes('change room') || 
+                label.includes('change theme') ||
+                label.includes('change level') ||
                 label.includes('return') ||
                 label.includes('switch account') ||
                 label.includes('report')
@@ -104,7 +110,7 @@ def style_buttons() -> None:
                 label.includes('change settings')
               ) {
                 bg = confirmColor;
-              } else if (label.includes('next') || label.includes('refresh') || label.includes('create room')) {
+              } else if (label === 'correct' || label.includes('next') || label.includes('refresh') || label.includes('create room')) {
                 bg = positiveColor;
               } else if (
                 label.includes('suggest') ||
@@ -112,7 +118,13 @@ def style_buttons() -> None:
                 label.includes('regenerate')
               ) {
                 bg = aiColor;
-              } else if (label.includes('like')
+              } else if (label.includes('edit question')) {
+                bg = editColor;
+              } else if (label.includes('saved for your turn')) {
+                bg = savedColor;
+              } else if (
+                label.includes('like') ||
+                label.includes('save for my turn')
               ) {
                 bg = loveColor;
               } else if (

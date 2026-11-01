@@ -427,7 +427,9 @@ LANGUAGE_FLAGS: Dict[str, str] = {
 
 SUPPORTED_OPENAI_LLM_MODELS: Dict[str, str] = {
     "gpt-5.4-nano": "OpenAI GPT-5.4 Nano",
+    "gpt-5.4-nano-high": "OpenAI GPT-5.4 Nano (High reasoning)",
     "gpt-5.4-mini": "OpenAI GPT-5.4 Mini",
+    "gpt-5.4-mini-high": "OpenAI GPT-5.4 Mini (High reasoning)",
     "gpt-5-mini": "OpenAI GPT-5 Mini",
     "gpt-5-nano": "OpenAI GPT-5 Nano",
     "gpt-4o-mini": "OpenAI GPT-4o Mini",
@@ -439,12 +441,60 @@ SUPPORTED_OPENAI_LLM_MODELS: Dict[str, str] = {
 }
 
 SUPPORTED_GEMINI_LLM_MODELS: Dict[str, str] = {
+    "gemini-3.7-flash": "Gemini 3.7 Flash",
+    "gemini-3.6-flash-low": "Gemini 3.6 Flash (Low thinking)",
+    "gemini-3.5-flash": "Gemini 3.5 Flash",
+    "gemini-3.5-flash-high": "Gemini 3.5 Flash (High thinking)",
+    "gemini-3.5-flash-lite-minimal": "Gemini 3.5 Flash Lite (Minimal thinking)",
+    "gemini-3.5-flash-lite-high": "Gemini 3.5 Flash Lite (High thinking)",
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
+    "gemini-3.1-pro-preview": "Gemini 3.1 Pro Preview",
+    "gemini-3-flash-minimal": "Gemini 3 Flash Preview (Minimal thinking)",
+    "gemini-3-flash-preview": "Gemini 3 Flash Preview",
+    "gemini-2.5-pro": "Gemini 2.5 Pro",
     "gemini-2.0-flash-lite": "Gemini 2.0 Flash Lite",
     "gemini-2.0-flash": "Gemini 2.0 Flash",
     "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
 }
 SUPPORTED_LLM_MODELS: Dict[str, str] = SUPPORTED_OPENAI_LLM_MODELS | SUPPORTED_GEMINI_LLM_MODELS
+
+
+@dataclass(frozen=True)
+class LLMModelConfig:
+    """Resolve a selectable model preset into provider request settings."""
+
+    provider: str
+    provider_model: str
+    reasoning_effort: Optional[str] = None
+
+
+LLM_MODEL_CONFIGS: Dict[str, LLMModelConfig] = {
+    # Older rooms may store the provider model rather than a selectable preset.
+    "gemini-3.5-flash-lite": LLMModelConfig("gemini", "gemini-3.5-flash-lite"),
+    "gemini-3.6-flash-low": LLMModelConfig("gemini", "gemini-3.6-flash", "low"),
+    "gemini-3.5-flash-high": LLMModelConfig("gemini", "gemini-3.5-flash", "high"),
+    "gemini-3.5-flash-lite-minimal": LLMModelConfig("gemini", "gemini-3.5-flash-lite", "minimal"),
+    "gemini-3.5-flash-lite-high": LLMModelConfig("gemini", "gemini-3.5-flash-lite", "high"),
+    "gemini-3-flash-minimal": LLMModelConfig("gemini", "gemini-3-flash-preview", "minimal"),
+    # Pin the translation preset to no reasoning without adding another UI option.
+    "gpt-5.4-nano": LLMModelConfig("openai", "gpt-5.4-nano", "none"),
+    "gpt-5.4-nano-high": LLMModelConfig("openai", "gpt-5.4-nano", "high"),
+    "gpt-5.4-mini": LLMModelConfig("openai", "gpt-5.4-mini", "none"),
+    "gpt-5.4-mini-high": LLMModelConfig("openai", "gpt-5.4-mini", "high"),
+}
+
+
+def resolve_llm_model(model_name: str) -> LLMModelConfig:
+    """Return the authoritative provider configuration for a selectable preset."""
+    selection_key = model_name.lower()
+    if selection_key in LLM_MODEL_CONFIGS:
+        return LLM_MODEL_CONFIGS[selection_key]
+    if selection_key in SUPPORTED_GEMINI_LLM_MODELS:
+        return LLMModelConfig("gemini", selection_key)
+    if selection_key in SUPPORTED_OPENAI_LLM_MODELS:
+        return LLMModelConfig("openai", selection_key)
+    raise NotImplementedError(f"Model '{model_name}' is not supported by the LLM registry")
 
 
 def _iso_to_datetime(value: str) -> datetime:
@@ -482,12 +532,14 @@ class Player:
 @dataclass
 class RoomSettings:
     max_score: int = 100
+    max_score_customized: bool = False
     language: str = "en"
     llm_model: str = "gemini-2.5-flash"
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "max_score": self.max_score,
+            "max_score_customized": self.max_score_customized,
             "language": self.language,
             "llm_model": self.llm_model,
         }
@@ -496,6 +548,7 @@ class RoomSettings:
     def from_dict(cls, data: Dict[str, object]) -> "RoomSettings":
         return cls(
             max_score=int(data.get("max_score", 100)),
+            max_score_customized=bool(data.get("max_score_customized", int(data.get("max_score", 100)) != 100)),
             language=str(data.get("language", "en")),
             llm_model=str(data.get("llm_model", "gemini-2.5-flash")),
         )

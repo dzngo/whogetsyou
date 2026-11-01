@@ -5,21 +5,32 @@ from __future__ import annotations
 import copy
 import html
 import random
+import uuid
+from fractions import Fraction
 from typing import Dict, List, Optional
 
 import streamlit as st
 
 from models import DEFAULT_THEMES, Level, Player, Room
 from services.game_service import GameService
+from services.two_player_game import judge_answer, player_statistics
+from services.assisted_sampling import assisted_candidates
 from services.llm_service import LLMService
 from services.room_service import RoomService
-from storage.google_sheet_service import GoogleSheetService, GoogleSheetServiceError
+from services.question_bank import (
+    choose_listener,
+    eligible_questions,
+    load_questions,
+    order_themes_by_distribution,
+    prepare_saved_question,
+    sample_question,
+)
+from storage.question_events import QuestionEvents
 from ui import common
 
 
 class GameFlow:
     REFRESH_INTERVAL_SECONDS = 3
-    CUSTOM_THEME_OPTION = "Custom"
 
     def __init__(
         self,
@@ -52,6 +63,7 @@ class GameFlow:
             st.info("Initializing game state…")
             return
 
+        self._flush_events(room, state)
         profile = st.session_state.get("player_profile", {})
         current_player_id = profile.get("player_id")
         current_player_name = profile.get("name")
@@ -66,14 +78,18 @@ class GameFlow:
         listener_has_guessed = bool(current_player_id and current_player_id in guesses)
         listener_has_submitted = bool(current_player_id and current_player_id in submissions)
         waiting_phases = {
+            "saved_questions",
             "theme_selection",
             "level_selection",
             "question_generation",
+            "judgment",
             "reveal",
         }
-        should_watch_for_updates = (not is_storyteller and phase in waiting_phases) or (
-            phase == "answer_entry" and listener_has_submitted
-        ) or (phase == "guessing" and (listener_has_guessed or is_storyteller))
+        should_watch_for_updates = (
+            (not is_storyteller and phase in waiting_phases)
+            or (phase == "answer_entry" and listener_has_submitted)
+            or (phase == "guessing" and (listener_has_guessed or is_storyteller))
+        )
         if should_watch_for_updates:
             self._watch_room_updates(room.room_code, room.updated_at.isoformat())
 
@@ -86,7 +102,9 @@ class GameFlow:
         )
 
         phase = state.get("phase")
-        if phase == "theme_selection":
+        if phase == "saved_questions":
+            self._render_saved_questions_phase(room, state, storyteller_id, current_player_id)
+        elif phase == "theme_selection":
             self._render_theme_phase(room, state, storyteller_id, current_player_id)
         elif phase == "level_selection":
             self._render_level_phase(room, state, storyteller_id, current_player_id)
@@ -94,10 +112,15 @@ class GameFlow:
             self._render_question_phase(room, state, storyteller_id, current_player_id)
         elif phase == "answer_entry":
             self._render_answer_phase(room, state, storyteller_id, current_player_id, is_host)
+        elif phase == "judgment":
+            self._render_two_player_judgment(room, state, storyteller_id, current_player_id)
         elif phase == "guessing":
             self._render_guess_phase(room, state, storyteller_id, current_player_id, is_host)
         elif phase == "reveal":
-            self._render_reveal_phase(room, state, storyteller_id, current_player_id, is_host)
+            if state.get("game_mode") == "two_player":
+                self._render_two_player_reveal(room, state, storyteller_id, current_player_id, is_host)
+            else:
+                self._render_reveal_phase(room, state, storyteller_id, current_player_id, is_host)
         elif phase == "results":
             self._render_results(room, state, is_host)
         else:
@@ -131,11 +154,14 @@ class GameFlow:
         """Discard an unconfirmed question before returning to round setup."""
         state["question"] = None
         state["question_autogen_attempted"] = False
+        state["consecutive_question_skips"] = 0
+        state["assisted_candidate_ids"] = []
         state["question_candidates"] = []
         state["current_candidate_index"] = 0
         question_key = f"{room.room_code}_question_text"
         st.session_state.pop(question_key, None)
         st.session_state.pop(f"{question_key}_prefill", None)
+        st.session_state.pop(f"{question_key}_editing", None)
 
     @st.fragment(run_every=REFRESH_INTERVAL_SECONDS)
     def _watch_room_updates(self, room_code: str, known_updated_at: str) -> None:
@@ -187,6 +213,46 @@ class GameFlow:
     # ------------------------------------------------------------------ #
     # Phase renderers
     # ------------------------------------------------------------------ #
+    def _render_saved_questions_phase(
+        self,
+        room: Room,
+        state: Dict[str, object],
+        storyteller_id: Optional[str],
+        current_player_id: Optional[str],
+    ) -> None:
+        if not self._storyteller_can_act(storyteller_id, current_player_id):
+            st.info("Waiting for the Storyteller to choose a question...")
+            return
+        st.subheader("Saved for your turn")
+        saved = (state.get("saved_questions_by_player") or {}).get(current_player_id, [])
+        if saved:
+            for item in list(saved):
+                st.write(item["question"])
+                use_col, remove_col = st.columns(2)
+                if use_col.button("Use saved question", key=f"use_{item['save_id']}"):
+                    self._clear_question_draft(room, state)
+                    state["selected_theme"] = item["theme"]
+                    state["selected_level"] = item["level"]
+                    try:
+                        saved_question = prepare_saved_question(item, room.players, storyteller_id)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                        return
+                    state["question"] = saved_question
+                    st.session_state[f"{room.room_code}_question_text_prefill"] = saved_question["question"]
+                    state["question_autogen_attempted"] = True
+                    state["phase"] = "question_generation"
+                    self._save_state(room, state)
+                if remove_col.button("Remove", key=f"remove_{item['save_id']}"):
+                    saved.remove(item)
+                    self._queue_event(state, item.get("question_id"), "unsaved")
+                    self._save_state(room, state)
+        else:
+            st.info("You have no saved questions.")
+        if st.button("Skip saved questions", key=f"{room.room_code}_skip_saved_questions"):
+            state["phase"] = "theme_selection"
+            self._save_state(room, state)
+
     def _render_theme_phase(
         self,
         room: Room,
@@ -201,32 +267,17 @@ class GameFlow:
 
         st.subheader("Choose theme")
         theme_key = f"{room.room_code}_theme_select"
-        custom_key = f"{room.room_code}_theme_custom"
+        saved = (state.get("saved_questions_by_player") or {}).get(current_player_id, [])
+        if saved and st.button("Back to saved questions", key=f"{room.room_code}_back_to_saved_questions"):
+            state["phase"] = "saved_questions"
+            self._save_state(room, state)
+        themes = order_themes_by_distribution(DEFAULT_THEMES, load_questions())
         saved_theme = str(state.get("selected_theme") or "")
-        default_theme = (
-            saved_theme
-            if saved_theme in DEFAULT_THEMES
-            else self.CUSTOM_THEME_OPTION
-            if saved_theme
-            else DEFAULT_THEMES[0]
-        )
-        if theme_key not in st.session_state:
-            st.session_state[theme_key] = default_theme
-        if custom_key not in st.session_state and saved_theme not in DEFAULT_THEMES:
-            st.session_state[custom_key] = saved_theme
-        selected = st.selectbox(
-            "Select a theme",
-            options=[*DEFAULT_THEMES, self.CUSTOM_THEME_OPTION],
-            key=theme_key,
-        )
-        custom = ""
-        if selected == self.CUSTOM_THEME_OPTION:
-            custom = st.text_input("Custom theme", key=custom_key)
+        if theme_key not in st.session_state or st.session_state[theme_key] not in themes:
+            st.session_state[theme_key] = saved_theme if saved_theme in themes else themes[0]
+        selected = st.selectbox("Select a theme", options=themes, key=theme_key)
         if st.button("Confirm theme"):
-            choice = custom.strip() if selected == self.CUSTOM_THEME_OPTION else selected
-            if not choice:
-                st.error("Please enter a custom theme.")
-                return
+            choice = selected
             self._clear_question_draft(room, state)
             state["selected_theme"] = choice
             state["phase"] = "level_selection"
@@ -290,12 +341,8 @@ class GameFlow:
         with st.container(border=True):
             if question_data:
                 st.markdown(f"**Current question:** {question_data.get('question')}")
-                self._render_question_feedback_controls(
-                    room=room,
-                    question=question_data.get("question", ""),
-                    theme=current_theme,
-                    level=current_level,
-                )
+                if question_data.get("translation_fallback"):
+                    st.warning("Translation could not preserve the player names. This question is shown in English.")
 
         manual_key = f"{room.room_code}_question_text"
         prefill_key = f"{manual_key}_prefill"
@@ -309,39 +356,51 @@ class GameFlow:
                 if self._prepare_question(room, state, prefill_key, notify=False):
                     return
 
-        manual_value = st.text_area("Edit question", key=manual_key)
-        action_col1, action_col2 = st.columns(2)
-        if action_col1.button("Change question", key=f"{room.room_code}_question_change"):
+        if not state.get("question"):
+            storyteller = self._current_storyteller_id(state)
+            seen = (state.get("question_seen_by_player") or {}).get(storyteller, [])
+            confirmed = state.get("confirmed_question_ids") or []
+            if eligible_questions(load_questions(), current_theme, current_level, [], confirmed) and st.button(
+                "Restart my question pool"
+            ):
+                matching = {
+                    q["id"] for q in eligible_questions(load_questions(), current_theme, current_level, [], confirmed)
+                }
+                state.setdefault("question_seen_by_player", {})[storyteller] = [
+                    qid for qid in seen if qid not in matching
+                ]
+                state["question_autogen_attempted"] = False
+                self._save_state(room, state)
+            return
+
+        confirm_col, change_col, edit_col = st.columns(3)
+        confirm_clicked = confirm_col.button("Confirm question")
+        change_clicked = change_col.button("Change question", key=f"{room.room_code}_question_change")
+        editing_key = f"{manual_key}_editing"
+
+        def toggle_question_edit() -> None:
+            editing = st.session_state.get(editing_key, False)
+            st.session_state[editing_key] = not editing
+            st.session_state[manual_key] = question_data.get("question", "")
+
+        edit_label = "Cancel edit" if st.session_state.get(editing_key, False) else "Edit question"
+        edit_col.button(edit_label, key=f"{room.room_code}_question_edit", on_click=toggle_question_edit)
+        if st.session_state.get(editing_key, False):
+            manual_value = st.text_area("Your question", key=manual_key)
+        else:
+            manual_value = question_data.get("question", "")
+        if change_clicked:
             with st.spinner("Processing question ..."):
                 if self._prepare_question(room, state, prefill_key, notify=True, force=True):
                     return
-        if action_col2.button("Rephrase question", key=f"{room.room_code}_question_rephrase"):
-            cleaned = manual_value.strip()
-            if not cleaned:
-                st.error("Please enter a question to rephrase.")
-            else:
-                try:
-                    with st.spinner("Rephrasing question..."):
-                        new_text = self.llm_service.rephrase_text(
-                            kind="question",
-                            text=cleaned,
-                            language=room.settings.language,
-                            theme=current_theme,
-                            level=current_level,
-                        )
-                except Exception as exc:
-                    st.error(f"Content service error: {exc}")
-                else:
-                    st.session_state[prefill_key] = new_text
-                    st.success("Question rephrased.")
-                    common.rerun()
-
-        if st.button("Confirm question"):
+        if confirm_clicked:
             final_question = manual_value.strip()
             if not final_question:
                 st.error("Please enter a question.")
                 return
-            if room.settings.language.lower() == "en":
+            if room.settings.language.lower() == "en" or (
+                question_data.get("translation_fallback") and final_question == question_data.get("question")
+            ):
                 final_question_en = final_question
             else:
                 try:
@@ -358,16 +417,28 @@ class GameFlow:
                     st.error(f"Content service error: {exc}")
                     return
             current_question_data = state.get("question") or {}
-            state["question"] = {
-                "question": final_question,
-                "question_en": final_question_en,
-                "angle_key": current_question_data.get("angle_key", ""),
-                "candidate_rank": current_question_data.get("candidate_rank", 0),
-            }
-            history_container = state.setdefault("question_history", {})
-            history_key = f"{current_theme}::{current_level}"
-            if final_question_en not in history_container.setdefault(history_key, []):
-                history_container[history_key].append(final_question_en)
+            question_id = current_question_data.get("question_id")
+            source = current_question_data.get("source", "bank")
+            edited = final_question != current_question_data.get("question", "")
+            state["question"] = dict(current_question_data, question=final_question, question_en=final_question_en)
+            if question_id:
+                confirmed = state.setdefault("confirmed_question_ids", [])
+                if question_id not in confirmed:
+                    confirmed.append(question_id)
+                action = (
+                    ("saved_confirmed_edited" if edited else "saved_confirmed")
+                    if source == "saved"
+                    else ("confirmed_edited" if edited else "confirmed")
+                )
+                self._queue_event(state, question_id, action)
+                state.setdefault("question_preference_history", {}).setdefault(storyteller_id, []).append(
+                    {"question_id": question_id, "action": "confirmed"}
+                )
+            if source == "saved":
+                player_saved = state.setdefault("saved_questions_by_player", {}).setdefault(storyteller_id, [])
+                player_saved[:] = [
+                    item for item in player_saved if item.get("save_id") != current_question_data.get("save_id")
+                ]
             state["phase"] = "answer_entry"
             self._save_state(room, state)
 
@@ -387,6 +458,7 @@ class GameFlow:
 
         with st.container(border=True):
             st.markdown(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
 
         if not current_player_id:
             st.info("Waiting for your player session...")
@@ -397,7 +469,7 @@ class GameFlow:
         current_player = lookup.get(current_player_id)
         current_player_label = current_player.name if current_player else "Player"
         current_level = self._current_level_value(state)
-        input_key = f"{room.room_code}_answer_input_{current_player_id}"
+        input_key = f"{room.room_code}_answer_input_{current_player_id}_{state.get('round', 1)}"
         prefill_key = f"{input_key}_prefill"
         if input_key not in st.session_state:
             st.session_state[input_key] = submissions.get(current_player_id, "")
@@ -406,6 +478,8 @@ class GameFlow:
 
         if current_player_id == storyteller_id:
             st.caption("You are the Storyteller. Submit your answer.")
+        elif state.get("game_mode") == "two_player":
+            st.caption("Answer as you think the Storyteller would.")
         else:
             st.caption("Submit one plausible answer. Do not reveal whether it is yours.")
 
@@ -441,9 +515,12 @@ class GameFlow:
         if pending_count > 0:
             st.info(f"Waiting for {pending_count} player(s) to submit answers.")
         else:
-            st.info("All answers submitted. Moving to guessing...")
+            message = ("All answers submitted. Moving to judgment..." if state.get("game_mode") == "two_player"
+                       else "All answers submitted. Moving to guessing...")
+            st.info(message)
 
-        if is_host and st.button("Force guessing phase", key="host_force_guessing"):
+        if (state.get("game_mode") != "two_player" and is_host
+                and st.button("Force guessing phase", key="host_force_guessing")):
             state["multiple_choice"] = {
                 "options": self._build_options_from_submissions(
                     room=room,
@@ -471,8 +548,9 @@ class GameFlow:
         editing_key: str,
         storyteller_id: Optional[str],
     ) -> None:
-        col1, col2, col3 = st.columns(3)
-        if col1.button("Suggest answer", key=f"{room.room_code}_suggest_answer_{current_player_id}"):
+        col1, col2 = st.columns(2)
+        if (state.get("game_mode") != "two_player"
+                and col2.button("Suggest answer", key=f"{room.room_code}_suggest_answer_{current_player_id}")):
             try:
                 with st.spinner("Suggesting answer..."):
                     resp = self.llm_service.suggest_answer(
@@ -492,35 +570,14 @@ class GameFlow:
             except Exception as exc:
                 st.error(f"Content service error: {exc}")
 
-        if col2.button("Rephrase my answer", key=f"{room.room_code}_rephrase_answer_{current_player_id}"):
-            current = st.session_state.get(input_key, "").strip()
-            if not current:
-                st.error("Please enter an answer first.")
-            else:
-                try:
-                    with st.spinner("Rephrasing answer..."):
-                        rewritten = self.llm_service.rephrase_text(
-                            kind="answer",
-                            text=current,
-                            language=room.settings.language,
-                            question=question,
-                            theme=self._current_theme(state),
-                            level=current_level,
-                        )
-                except Exception as exc:
-                    st.error(f"Content service error: {exc}")
-                else:
-                    st.session_state[prefill_key] = rewritten
-                    common.rerun()
-
         submit_label = "Save changes" if current_player_id in submissions else "Submit answer"
-        if col3.button(submit_label, key=f"{room.room_code}_submit_answer_{current_player_id}"):
+        if col1.button(submit_label, key=f"{room.room_code}_submit_answer_{current_player_id}"):
             answer = st.session_state.get(input_key, "").strip()
             if not answer:
                 st.error("Answer cannot be empty.")
                 return
             other_answers = [text for pid, text in submissions.items() if pid != current_player_id and text.strip()]
-            if self._is_duplicate_answer(
+            if state.get("game_mode") != "two_player" and self._is_duplicate_answer(
                 candidate=answer,
                 existing_answers=other_answers,
                 question=question,
@@ -533,17 +590,82 @@ class GameFlow:
             state["answer_submissions"] = submissions
             st.session_state.pop(editing_key, None)
             if len(submissions) >= len(room.players):
-                state["multiple_choice"] = {
-                    "options": self._build_options_from_submissions(
-                        room=room,
-                        storyteller_id=storyteller_id,
-                        submissions=submissions,
-                    )
-                }
-                state["listener_guesses"] = {}
                 state["round_summary"] = None
-                state["phase"] = "guessing"
+                if state.get("game_mode") == "two_player":
+                    state["phase"] = "judgment"
+                else:
+                    state["multiple_choice"] = {
+                        "options": self._build_options_from_submissions(
+                            room=room, storyteller_id=storyteller_id, submissions=submissions,
+                        )
+                    }
+                    state["listener_guesses"] = {}
+                    state["phase"] = "guessing"
             self._save_state(room, state)
+
+    def _render_two_player_judgment(
+        self, room: Room, state: Dict[str, object], storyteller_id: Optional[str], current_player_id: Optional[str]
+    ) -> None:
+        st.subheader("Storyteller's decision")
+        question = (state.get("question") or {}).get("question", "")
+        st.write(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
+        if not self._storyteller_can_act(storyteller_id, current_player_id):
+            st.info("Waiting for the Storyteller to review the answers.")
+            return
+        listeners = [player for player in room.players if player.player_id != storyteller_id]
+        submissions = state.get("answer_submissions") or {}
+        if len(listeners) != 1 or storyteller_id not in submissions or listeners[0].player_id not in submissions:
+            st.warning("Both players must submit an answer before judgment.")
+            return
+        listener = listeners[0]
+        with st.container(border=True):
+            st.write("**Your answer**")
+            st.write(submissions[storyteller_id])
+            st.write(f"**{listener.name}'s answer**")
+            st.write(submissions[listener.player_id])
+        st.write("Does the Listener's answer match what you meant?")
+        correct_col, incorrect_col = st.columns(2)
+        if correct_col.button("Correct", key=f"{room.room_code}_judgment_correct"):
+            judge_answer(state, storyteller_id, listener.player_id, True)
+            self._save_state(room, state)
+        if incorrect_col.button("Not quite", key=f"{room.room_code}_judgment_incorrect"):
+            judge_answer(state, storyteller_id, listener.player_id, False)
+            self._save_state(room, state)
+
+    def _render_two_player_reveal(
+        self, room: Room, state: Dict[str, object], storyteller_id: Optional[str],
+        current_player_id: Optional[str], is_host: bool,
+    ) -> None:
+        st.subheader("Reveal & scoring")
+        question = (state.get("question") or {}).get("question", "")
+        st.write(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
+        summary = state.get("round_summary") or {}
+        if not summary:
+            st.warning("This round has not been judged.")
+            return
+        lookup = self._player_lookup(room)
+        listener = lookup.get(summary.get("listener_id"))
+        storyteller = lookup.get(storyteller_id)
+        answers = state.get("answer_submissions") or {}
+        with st.container(border=True):
+            st.write(f"**{storyteller.name if storyteller else 'Storyteller'}:** {answers.get(storyteller_id, '')}")
+            st.write(f"**{listener.name if listener else 'Listener'}:** {answers.get(summary.get('listener_id'), '')}")
+            st.write("**Correct!**" if summary.get("correct") else "**Not quite**")
+            st.write(f"{listener.name if listener else 'Listener'}: +{summary.get('points', 0)} points")
+        if summary.get("winners"):
+            st.success("Game complete! Both players have had the same number of Listener turns.")
+            if ((current_player_id == storyteller_id) or is_host) and st.button("View final results"):
+                state["phase"] = "results"
+                state["winners"] = summary["winners"]
+                state["end_reason"] = f"Target score of {state['max_score']} reached after equal Listener turns."
+                self._save_state(room, state)
+            return
+        if (current_player_id == storyteller_id) or is_host:
+            if st.button("Next turn"):
+                self.game_service.prepare_next_turn(room, advance_round=True)
+                common.rerun()
 
     def _render_guess_phase(
         self,
@@ -557,6 +679,7 @@ class GameFlow:
         question = (state.get("question") or {}).get("question", "")
         with st.container(border=True):
             st.markdown(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
 
         options = state.get("multiple_choice", {}).get("options", [])
         if not options:
@@ -572,8 +695,8 @@ class GameFlow:
         listener_ids = {player.player_id for player in listeners}
         guesses = dict(state.get("listener_guesses") or {})
 
-        option_display = [f"{opt['label']}. {opt['text']}" for opt in options]
-        display_to_label = {display: opt["label"] for display, opt in zip(option_display, options)}
+        eligible_options = [opt for opt in options if opt.get("owner_id") != current_player_id]
+        display_to_option = {f"{opt['label']}. {opt['text']}": opt for opt in eligible_options}
 
         if current_player_id in listener_ids:
             if current_player_id in guesses:
@@ -581,28 +704,30 @@ class GameFlow:
                 st.success(f"Your guess was submitted: {chosen_label}")
                 st.info("Waiting for other listeners to submit...")
             else:
-                selection_display = st.radio(
-                    "Choose the Storyteller answer",
-                    options=option_display,
-                    index=0,
-                    key=f"{room.room_code}_guess_select",
-                )
-                if st.button("Submit my guess"):
-                    guesses[current_player_id] = {
-                        "label": display_to_label[selection_display],
-                    }
-                    state["listener_guesses"] = guesses
-                    self._save_state(room, state)
+                if not display_to_option:
+                    st.warning("No eligible answers are available to guess.")
+                else:
+                    st.caption("You cannot select your own answer.")
+                    selection_display = st.radio(
+                        "Choose the Storyteller answer",
+                        options=list(display_to_option),
+                        index=0,
+                        key=f"{room.room_code}_guess_select_{current_player_id}",
+                    )
+                    if st.button("Submit my guess"):
+                        selected = display_to_option.get(selection_display)
+                        if not selected or selected.get("owner_id") == current_player_id:
+                            st.error("Please select another player's answer.")
+                        else:
+                            guesses[current_player_id] = {"label": selected["label"]}
+                            state["listener_guesses"] = guesses
+                            self._save_state(room, state)
         else:
             st.info("Waiting for listeners to submit their guesses...")
 
         remaining_count = max(len(listeners) - len(guesses), 0)
         if remaining_count > 0:
-            pending_names = [
-                player.name
-                for player in listeners
-                if player.player_id not in guesses
-            ]
+            pending_names = [player.name for player in listeners if player.player_id not in guesses]
             st.caption(f"Still waiting for {remaining_count} listener(s): {', '.join(pending_names)}")
         else:
             state["phase"] = "reveal"
@@ -625,6 +750,7 @@ class GameFlow:
         question = (state.get("question") or {}).get("question", "")
         with st.container(border=True):
             st.markdown(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
 
         options = (state.get("multiple_choice") or {}).get("options", [])
         lookup = self._player_lookup(room)
@@ -717,11 +843,15 @@ class GameFlow:
             winner_names = [lookup[pid].name for pid, score in scoreboard if score == top_score and pid in lookup]
 
         reason_html = f"<div class='wg-results-reason'>{html.escape(str(reason))}</div>" if reason else ""
-        champion_label = "Champions" if len(winner_names) > 1 else "Champion"
+        if state.get("game_mode") == "two_player":
+            champion_label = "It's a tie!" if len(winner_names) > 1 else "Champion"
+        else:
+            champion_label = "Champions" if len(winner_names) > 1 else "Champion"
         champion_names = " + ".join(html.escape(name) for name in winner_names) if winner_names else "No winner"
         champion_score = max((score for _, score in scoreboard), default=0)
         ranking_html = self._build_arcade_ranking_html(scoreboard, lookup)
-        stats_html = self._build_arcade_statistics_html(room, state)
+        stats_html = (self._build_two_player_statistics_html(room, state) if state.get("game_mode") == "two_player"
+                      else self._build_arcade_statistics_html(room, state))
 
         st.markdown(
             f"""
@@ -751,10 +881,15 @@ class GameFlow:
 
         if is_host:
             if st.button("Return to host lobby"):
-                self.game_service.end_game(room)
-                st.session_state.pop("active_room_code", None)
-                st.session_state["route"] = "host"
-                common.rerun()
+                if (room.game_state or {}).get("question_events_pending"):
+                    st.error(
+                        "Question statistics are waiting to be saved. Please retry when the database is available."
+                    )
+                else:
+                    self.game_service.end_game(room)
+                    st.session_state.pop("active_room_code", None)
+                    st.session_state["route"] = "host"
+                    common.rerun()
         else:
             if st.button("Back to entry"):
                 st.session_state["route"] = "entry"
@@ -973,18 +1108,50 @@ class GameFlow:
         lookup: Dict[str, Player],
     ) -> str:
         rows: List[str] = []
+        previous_score = None
+        rank = 0
         for index, (pid, score) in enumerate(scoreboard, start=1):
+            if score != previous_score:
+                rank = index
+            previous_score = score
             player = lookup.get(pid)
             if not player:
                 continue
             rows.append(
                 "<div class='wg-results-rank-row'>"
-                f"<div class='wg-results-rank-number'>#{index}</div>"
+                f"<div class='wg-results-rank-number'>#{rank}</div>"
                 f"<div class='wg-results-rank-name'>{html.escape(player.name)}</div>"
                 f"<div class='wg-results-rank-score'>{score} pts</div>"
                 "</div>"
             )
         return "".join(rows) or "<div class='wg-results-empty'>No scores recorded.</div>"
+
+    def _build_two_player_statistics_html(self, room: Room, state: Dict[str, object]) -> str:
+        if not state.get("completed_rounds"):
+            return ("<section class='wg-results-panel'><div class='wg-results-section-title'>"
+                    "💬 How well did you get each other?</div>"
+                    "<div class='wg-results-empty'>No completed rounds yet.</div></section>")
+        cards = []
+        totals = []
+        for player in room.players:
+            stats = player_statistics(state, player.player_id)
+            totals.append(stats)
+            accuracy = f"{stats['accuracy'] * 100:.0f}%" if stats['accuracy'] is not None else "—"
+            cards.append(
+                "<div class='wg-results-stat-card'>"
+                f"<div class='wg-results-stat-title'>{html.escape(player.name)} as Listener</div>"
+                f"<div class='wg-results-stat-value'>{stats['correct']} of {stats['turns']} correct · {accuracy}</div>"
+                f"<div class='wg-results-stat-subtitle'>Shallow: {stats['shallow']} · Deep: {stats['deep']}</div>"
+                "</div>"
+            )
+        turns = sum(stats['turns'] for stats in totals)
+        correct = sum(stats['correct'] for stats in totals)
+        shared = f"{correct / turns * 100:.0f}%" if turns else "—"
+        return ("<section class='wg-results-panel'>"
+                "<div class='wg-results-section-title'>💬 How well did you get each other?</div>"
+                f"<div class='wg-results-stat-grid'>{''.join(cards)}</div>"
+                f"<div class='wg-results-stat-subtitle'>Shared understanding: {shared} ({correct} of {turns} correct)</div>"
+                "</section>")
 
     def _build_arcade_statistics_html(self, room: Room, state: Dict[str, object]) -> str:
         stats = self._compute_game_statistics(room, state)
@@ -996,19 +1163,31 @@ class GameFlow:
                 "</section>"
             )
         stat_cards = [
-            ("🧠 Mind Reader", "Most correct guesses", self._format_stat_winners(stats["mind_reader"], "correct guess")),
+            (
+                "🧠 Mind Reader",
+                "Highest correct-guess accuracy",
+                self._format_stat_winners(stats["mind_reader"], "correct guess"),
+            ),
             (
                 "🙃 Wrong With Confident",
-                "Fewest correct guesses",
-                self._format_stat_winners(stats["wrong_with_confident"], "correct guess", lower_is_better=True),
+                "Lowest correct-guess accuracy",
+                self._format_accuracy_names(stats["wrong_with_confident"]),
             ),
-            ("🎭 Best Impostor", "Fooled the most players", self._format_stat_winners(stats["best_impostor"], "fooled guess")),
+            (
+                "🎭 Best Impostor",
+                "Highest decoy success rate",
+                self._format_decoy_ratio(stats["best_impostor"]),
+            ),
             (
                 "🧩 404 Personality",
                 "Hardest to guess",
                 self._format_stat_winners(stats["personality_404"], "correct guess against them", lower_is_better=True),
             ),
-            ("👀 No Incognito Mode", "Easiest to read", self._format_stat_winners(stats["no_incognito_mode"], "correct guess against them")),
+            (
+                "👀 No Incognito Mode",
+                "Easiest to read",
+                self._format_stat_winners(stats["no_incognito_mode"], "correct guess against them"),
+            ),
             ("📡 Group Telepathy Score", "Correct guesses by the group", f"{stats['group_telepathy_score']:.0f}%"),
         ]
         cards_html = "".join(
@@ -1019,10 +1198,7 @@ class GameFlow:
             "</div>"
             for title, subtitle, value in stat_cards
         )
-        bestie_cards = "".join(
-            self._build_bestie_card_html(line)
-            for line in stats["certified_besties"]
-        )
+        bestie_cards = "".join(self._build_bestie_card_html(line) for line in stats["certified_besties"])
         return (
             "<section class='wg-results-panel'>"
             "<div class='wg-results-section-title'>⚡ Game Statistics</div>"
@@ -1053,10 +1229,13 @@ class GameFlow:
         correct_guess_counts = {player.player_id: 0 for player in room.players}
         listener_guess_counts = {player.player_id: 0 for player in room.players}
         decoy_pick_counts = {player.player_id: 0 for player in room.players}
+        decoy_opportunities = {player.player_id: 0 for player in room.players}
         storyteller_correct_counts = {player.player_id: 0 for player in room.players}
         storyteller_guess_totals = {player.player_id: 0 for player in room.players}
         bestie_counts = {
-            storyteller.player_id: {listener.player_id: 0 for listener in room.players if listener.player_id != storyteller.player_id}
+            storyteller.player_id: {
+                listener.player_id: 0 for listener in room.players if listener.player_id != storyteller.player_id
+            }
             for storyteller in room.players
         }
         total_guesses = 0
@@ -1076,36 +1255,68 @@ class GameFlow:
                 storyteller_guess_totals[storyteller_id] += len(listener_ids)
                 storyteller_correct_counts[storyteller_id] += len(correct_ids)
             for pid in correct_ids:
-                if pid in correct_guess_counts:
+                if pid in correct_guess_counts and pid in guesses:
                     correct_guess_counts[pid] += 1
                 if storyteller_id in bestie_counts and pid in bestie_counts[storyteller_id]:
                     bestie_counts[storyteller_id][pid] += 1
-            for pid, count in (round_record.get("decoy_picks") or {}).items():
-                if pid in decoy_pick_counts:
-                    decoy_pick_counts[pid] += int(count or 0)
+            options = round_record.get("options") or []
+            options_by_label = {option.get("label"): option for option in options}
+            decoy_owners = {
+                option.get("owner_id") for option in options
+                if option.get("kind") == "listener" and option.get("owner_id") in decoy_opportunities
+            }
+            for guesser_id, guess in guesses.items():
+                if guesser_id not in listener_ids:
+                    continue
+                selected = options_by_label.get(guess.get("label"))
+                if not selected:
+                    continue
+                for owner_id in decoy_owners:
+                    if owner_id != guesser_id:
+                        decoy_opportunities[owner_id] += 1
+                owner_id = selected.get("owner_id")
+                if owner_id in decoy_owners and owner_id != guesser_id:
+                    decoy_pick_counts[owner_id] += 1
 
         storyteller_rates: Dict[str, float] = {}
         for pid, guess_total in storyteller_guess_totals.items():
             if guess_total:
                 storyteller_rates[pid] = storyteller_correct_counts[pid] / guess_total
 
+        accuracy = {
+            pid: Fraction(correct_guess_counts[pid], count)
+            for pid, count in listener_guess_counts.items()
+            if count > 0 and pid in lookup
+        }
+        wrong_with_confident = self._accuracy_stat(accuracy, lookup, lowest=True)
+        decoy_rates = {
+            pid: Fraction(decoy_pick_counts[pid], count)
+            for pid, count in decoy_opportunities.items()
+            if count > 0 and pid in lookup
+        }
+        best_impostor = self._accuracy_stat(decoy_rates, lookup)
+        best_impostor["ratios"] = {
+            lookup[pid].name: (decoy_pick_counts[pid], decoy_opportunities[pid]) for pid in decoy_rates
+        }
         return {
             "completed_round_count": len(completed_rounds),
             "group_telepathy_score": (total_correct / total_guesses * 100) if total_guesses else 0,
-            "mind_reader": self._top_stat_entries(correct_guess_counts, lookup),
-            "wrong_with_confident": self._top_stat_entries(
-                {
-                    pid: correct_guess_counts.get(pid, 0)
-                    for pid, guess_count in listener_guess_counts.items()
-                    if guess_count > 0
-                },
-                lookup,
-                lower_is_better=True,
-            ),
-            "best_impostor": self._top_stat_entries(decoy_pick_counts, lookup),
+            "mind_reader": self._accuracy_stat(accuracy, lookup),
+            "wrong_with_confident": wrong_with_confident,
+            "best_impostor": best_impostor,
             "personality_404": self._top_stat_entries(storyteller_rates, lookup, lower_is_better=True),
             "no_incognito_mode": self._top_stat_entries(storyteller_rates, lookup),
             "certified_besties": self._build_certified_bestie_lines(room, bestie_counts),
+        }
+
+    @staticmethod
+    def _accuracy_stat(accuracy: Dict[str, Fraction], lookup: Dict[str, Player], *, lowest: bool = False) -> dict:
+        if not accuracy:
+            return {"names": [], "value": None}
+        best = min(accuracy.values()) if lowest else max(accuracy.values())
+        return {
+            "names": sorted(lookup[pid].name for pid, rate in accuracy.items() if rate == best),
+            "value": float(best),
         }
 
     def _top_stat_entries(
@@ -1115,11 +1326,7 @@ class GameFlow:
         *,
         lower_is_better: bool = False,
     ) -> Dict[str, object]:
-        meaningful = {
-            pid: value
-            for pid, value in values.items()
-            if pid in lookup and (lower_is_better or value > 0)
-        }
+        meaningful = {pid: value for pid, value in values.items() if pid in lookup and (lower_is_better or value > 0)}
         if not meaningful:
             return {"names": [], "value": None}
         best_value = min(meaningful.values()) if lower_is_better else max(meaningful.values())
@@ -1144,6 +1351,22 @@ class GameFlow:
             suffix = "time" if best_value == 1 else "times"
             lines.append(f"{player.name}: {', '.join(names)} ({best_value} {suffix})")
         return lines
+
+    @staticmethod
+    def _format_accuracy_names(stat: Dict[str, object]) -> str:
+        names = stat.get("names") or []
+        value = stat.get("value")
+        if not names or value is None:
+            return "Not enough data."
+        return "; ".join(f"{name} - {value:.0%}" for name in names)
+
+    @staticmethod
+    def _format_decoy_ratio(stat: Dict[str, object]) -> str:
+        names = stat.get("names") or []
+        ratios = stat.get("ratios") or {}
+        if not names:
+            return "Not enough data."
+        return "; ".join(f"{name} - {ratios[name][0]}/{ratios[name][1]}" for name in names)
 
     def _format_stat_winners(
         self,
@@ -1172,252 +1395,179 @@ class GameFlow:
             return f"{unit}es"
         return f"{unit}s"
 
-    def _render_question_feedback_controls(
-        self,
-        *,
-        room: Room,
-        question: str,
-        theme: str,
-        level: str,
+    @staticmethod
+    def _queue_event(state: Dict[str, object], question_id: Optional[str], action: str) -> None:
+        if question_id:
+            state.setdefault("question_events_pending", []).append(
+                {"id": str(uuid.uuid4()), "question_id": question_id, "action": action}
+            )
+
+    def _render_save_question(
+        self, room: Room, state: Dict[str, object], storyteller_id: Optional[str], player_id: Optional[str]
     ) -> None:
-        if not question.strip():
+        if not player_id or player_id == storyteller_id:
             return
-        player_profile = st.session_state.get("player_profile") or {}
-        like_col, report_col = st.columns(2)
-        if like_col.button("❤️ Like", key=f"{room.room_code}_like_question"):
-            with st.spinner("Saving feedback ... "):
-                self._submit_question_feedback(
-                    player_profile=player_profile,
-                    question=question,
-                    theme=theme,
-                    level=level,
-                    action="like",
-                )
-
-        report_flag_key = f"{room.room_code}_show_report"
-        if report_col.button("⚠️ Report", key=f"{room.room_code}_report_question"):
-            st.session_state[report_flag_key] = not st.session_state.get(report_flag_key, False)
-        if st.session_state.get(report_flag_key):
-            reason_options = [
-                "Weird question",
-                "Doesn't match theme",
-                "Doesn't match level",
-                "Violent / harmful",
-                "Inappropriate / offensive",
-                "Other",
-            ]
-            reason_key = f"{room.room_code}_report_reason"
-            selected_reason = st.selectbox(
-                "Select a reason",
-                options=reason_options,
-                key=reason_key,
+        question = state.get("question") or {}
+        if not question.get("question_id"):
+            return
+        saved = state.setdefault("saved_questions_by_player", {}).setdefault(player_id, [])
+        round_key = str(state.get("round", 1))
+        existing = next((item for item in saved if item.get("saved_round") == round_key), None)
+        if existing:
+            if st.button(
+                "💖 Saved for your turn ✓ — Undo",
+                key=f"unsave_{room.room_code}_{player_id}",
+                help="Remove this question from your saved list.",
+            ):
+                saved.remove(existing)
+                self._queue_event(state, existing.get("question_id"), "unsaved")
+                self._save_state(room, state)
+        elif st.button(
+            "💾 Save for my turn",
+            key=f"save_{room.room_code}_{player_id}",
+            help="Keep this question in your saved list so you can choose it on a later turn as Storyteller. You can save several questions.",
+        ):
+            saved.append(
+                {
+                    "save_id": str(uuid.uuid4()),
+                    "saved_round": round_key,
+                    "question_id": question["question_id"],
+                    "question": question["question"],
+                    "question_en": question.get("question_en", ""),
+                    "placeholder_player_id": question.get("placeholder_player_id"),
+                    "placeholder_player_name": question.get("placeholder_player_name"),
+                    "placeholder_storyteller_name": question.get("placeholder_storyteller_name"),
+                    "translation_fallback": question.get("translation_fallback", False),
+                    "theme": state.get("selected_theme"),
+                    "level": state.get("selected_level"),
+                }
             )
-            col_submit, col_cancel = st.columns([1, 1])
-            if col_submit.button("Submit report", key=f"{room.room_code}_submit_report"):
-                if selected_reason == "Select a reason":
-                    st.error("Please choose a reason before submitting.")
-                else:
-                    with st.spinner("Saving report feedback ... "):
-                        self._submit_question_feedback(
-                            player_profile=player_profile,
-                            question=question,
-                            theme=theme,
-                            level=level,
-                            action="report",
-                            reason=selected_reason,
-                        )
-                        st.session_state.pop(report_flag_key, None)
-                        st.session_state.pop(reason_key, None)
-                common.rerun()
-            if col_cancel.button("Cancel", key=f"{room.room_code}_cancel_report"):
-                st.session_state.pop(report_flag_key, None)
-                st.session_state.pop(reason_key, None)
-                common.rerun()
-
-    def _submit_question_feedback(
-        self,
-        *,
-        player_profile: Dict[str, object],
-        question: str,
-        theme: str,
-        level: str,
-        action: str,
-        reason: Optional[str] = None,
-    ) -> None:
-        user_label = player_profile.get("name") or "Unknown player"
-        try:
-            GoogleSheetService().append_feedback(
-                user=str(user_label),
-                question=question,
-                theme=theme,
-                level=level,
-                action=action,
-                reason=reason,
-            )
-        except GoogleSheetServiceError as exc:
-            st.error(f"Unable to record feedback: {exc}")
-        except Exception as exc:
-            st.error(f"Unexpected error recording feedback: {exc}")
-        else:
-            if action == "like":
-                st.success("Thanks! Your like was recorded.")
-            else:
-                st.success("Report submitted. We'll review it soon.")
+            self._queue_event(state, question["question_id"], "saved")
+            self._save_state(room, state)
 
     def _prepare_question(
-        self,
-        room: Room,
-        state: Dict[str, object],
-        prefill_key: str,
-        *,
-        notify: bool,
-        force: bool = False,
+        self, room: Room, state: Dict[str, object], prefill_key: str, *, notify: bool, force: bool = False
     ) -> bool:
         if not force and state.get("question_autogen_attempted"):
             return False
         state["question_autogen_attempted"] = True
-        theme = state.get("selected_theme") or "General"
-        level_value = state.get("selected_level", Level.SHALLOW.value)
-        history_key = f"{theme}::{level_value}"
-        candidates = list(state.get("question_candidates") or [])
-        current_index = int(state.get("current_candidate_index", 0))
-
-        if force and candidates and current_index < len(candidates) - 1:
-            next_index = current_index + 1
-            if self._set_current_question_from_candidate(
-                room,
-                state,
-                prefill_key,
-                candidates[next_index],
-                next_index,
-                history_key=history_key,
-            ):
-                if notify:
-                    st.success("Question updated.")
-                self._save_state(room, state)
-                return True
+        current = state.get("question") or {}
+        player_id = self._current_storyteller_id(state)
+        if force and current.get("source") == "bank" and not current.get("skipped"):
+            question_id = current.get("question_id")
+            self._queue_event(state, question_id, "skipped")
+            if question_id:
+                state.setdefault("question_preference_history", {}).setdefault(player_id, []).append(
+                    {"question_id": question_id, "action": "skipped"}
+                )
+                state["consecutive_question_skips"] = int(state.get("consecutive_question_skips", 0)) + 1
+            current["skipped"] = True
+        seen = state.setdefault("question_seen_by_player", {}).setdefault(player_id, [])
+        bank = load_questions()
+        theme = self._current_theme(state)
+        level = self._current_level_value(state)
+        confirmed = state.get("confirmed_question_ids") or []
+        eligible = eligible_questions(bank, theme, level, seen, confirmed)
+        eligible_by_id = {item["id"]: item for item in eligible}
+        candidate = None
+        assisted_ids = [qid for qid in state.get("assisted_candidate_ids", []) if qid in eligible_by_id]
+        if int(state.get("consecutive_question_skips", 0)) >= 5 and eligible:
+            if not assisted_ids:
+                bank_by_id = {item["id"]: item for item in bank}
+                history = [
+                    {"action": item["action"], "question": bank_by_id[item["question_id"]]["text"]}
+                    for item in (state.get("question_preference_history") or {}).get(player_id, [])
+                    if item.get("question_id") in bank_by_id and item.get("action") in ("skipped", "confirmed")
+                ]
+                try:
+                    ranked = assisted_candidates(theme, level, history, eligible)
+                    assisted_ids = list(dict.fromkeys(qid for qid in ranked if qid in eligible_by_id))[:5]
+                except Exception:
+                    # A failed AI request never prevents normal gameplay.
+                    assisted_ids = []
+            if assisted_ids:
+                candidate = eligible_by_id[assisted_ids[0]]
+        if candidate is None:
+            candidate = sample_question(bank, theme, level, seen, confirmed)
+        state["assisted_candidate_ids"] = assisted_ids
+        if candidate is None:
+            state["question"] = None
+            self.game_service.set_state(room, state)
+            self._flush_events(room, state)
+            st.info("No more unseen questions for this theme and level. Choose another theme or restart your pool.")
             return False
-
-        candidate_pools = state.setdefault("question_candidate_pools", {})
-        pool = candidate_pools.get(history_key) or {}
-        pooled_candidates = list(pool.get("candidates") or [])
-        pooled_next_index = int(pool.get("next_index", 0))
-        if not force and pooled_next_index < len(pooled_candidates):
-            state["question_candidates"] = pooled_candidates
-            if self._set_current_question_from_candidate(
-                room,
-                state,
-                prefill_key,
-                pooled_candidates[pooled_next_index],
-                pooled_next_index,
-                history_key=history_key,
-            ):
-                self._save_state(room, state)
-                return True
-            return False
-
-        history_map = state.setdefault("question_history", {})
-        angle_history_map = state.setdefault("angle_history", {})
-        previous_questions = (history_map.get(history_key) or [])[-50:]
-        previous_angles = (angle_history_map.get(history_key) or [])[-50:]
         try:
-            candidate_set = self.llm_service.generate_question_candidate_set_with_trace(
-                theme=theme,
-                level=Level(level_value),
-                previous_questions=previous_questions,
-                angle_history=previous_angles,
-            )
+            question_en = candidate.get("display_template") or candidate["text"]
+            storyteller = self._player_lookup(room).get(player_id)
+            if "[STORYTELLER]" in question_en and not storyteller:
+                raise ValueError("The current Storyteller could not be found.")
+            listener = choose_listener(room.players, player_id) if "[PLAYER]" in question_en else None
+            names = []
+            if storyteller and "[STORYTELLER]" in question_en:
+                question_en = question_en.replace("[STORYTELLER]", storyteller.name)
+                names.append(storyteller.name)
+            if listener:
+                question_en = question_en.replace("[PLAYER]", listener.name)
+                names.append(listener.name)
+            display = question_en
+            translation_fallback = False
+            if room.settings.language.lower() != "en":
+                for _ in range(2):
+                    translated = self.llm_service.translate_text_with_trace(
+                        question_en, source_language="en", target_language=room.settings.language
+                    )
+                    if translated["error"]:
+                        raise RuntimeError(translated["error"])
+                    translated_text = translated["text"]
+                    if all(name in translated_text for name in names):
+                        display = translated_text
+                        break
+                else:
+                    # Avoid showing a question that names the wrong players.
+                    translation_fallback = True
         except Exception as exc:
             self.game_service.set_state(room, state)
-            st.error(f"Content service error: {exc}")
-            return False
-
-        new_candidates = [
-            {
-                "rank": candidate.rank,
-                "angle_key": candidate.angle_key,
-                "question_en": candidate.question_en,
-            }
-            for candidate in candidate_set.candidates
-        ]
-        if not new_candidates:
-            st.error("Content service error: no question was generated.")
-            return False
-        state["question_candidates"] = new_candidates
-        state["current_candidate_index"] = 0
-        candidate_pools[history_key] = {
-            "candidates": new_candidates,
-            "next_index": 0,
-        }
-        if not self._set_current_question_from_candidate(
-            room,
-            state,
-            prefill_key,
-            new_candidates[0],
-            0,
-            history_key=history_key,
-        ):
-            return False
-
-        history_container = state.setdefault("question_history", {})
-        angle_history_container = state.setdefault("angle_history", {})
-        question_items = history_container.setdefault(history_key, [])
-        for candidate in new_candidates:
-            question_en = candidate.get("question_en", "")
-            if question_en and question_en not in question_items:
-                question_items.append(question_en)
-        angle_history_container.setdefault(history_key, []).extend(candidate_set.selected_angle_keys)
-        if notify:
-            st.success("Question updated.")
-        self._save_state(room, state)
-        return True
-
-    def _set_current_question_from_candidate(
-        self,
-        room: Room,
-        state: Dict[str, object],
-        prefill_key: str,
-        candidate: Dict[str, object],
-        candidate_index: int,
-        *,
-        history_key: Optional[str] = None,
-    ) -> bool:
-        question_en = str(candidate.get("question_en") or "").strip()
-        if not question_en:
-            st.error("Content service error: question is empty.")
-            return False
-        try:
-            if room.settings.language.lower() == "en":
-                display_question = question_en
-            else:
-                translation_trace = self.llm_service.translate_text_with_trace(
-                    question_en,
-                    source_language="en",
-                    target_language=room.settings.language,
-                )
-                if translation_trace["error"]:
-                    raise RuntimeError(translation_trace["error"])
-                display_question = translation_trace["text"]
-        except Exception as exc:
+            self._flush_events(room, state)
             st.error(f"Content service error: {exc}")
             return False
         state["question"] = {
-            "question": display_question,
+            "question_id": candidate["id"],
+            "question": display,
             "question_en": question_en,
-            "angle_key": candidate.get("angle_key", ""),
-            "candidate_rank": candidate.get("rank", 0),
+            "source": "bank",
+            "translation_fallback": translation_fallback,
         }
-        state["current_candidate_index"] = candidate_index
-        if history_key:
-            candidate_pools = state.setdefault("question_candidate_pools", {})
-            pool = candidate_pools.setdefault(history_key, {})
-            pool.setdefault("candidates", list(state.get("question_candidates") or []))
-            pool["next_index"] = candidate_index + 1
-        st.session_state[prefill_key] = display_question
+        if storyteller and "[STORYTELLER]" in (candidate.get("display_template") or candidate["text"]):
+            state["question"]["placeholder_storyteller_name"] = storyteller.name
+        if listener:
+            state["question"]["placeholder_player_id"] = listener.player_id
+            state["question"]["placeholder_player_name"] = listener.name
+        seen.append(candidate["id"])
+        if state.get("assisted_candidate_ids") and state["assisted_candidate_ids"][0] == candidate["id"]:
+            state["assisted_candidate_ids"] = state["assisted_candidate_ids"][1:]
+        self._queue_event(state, candidate["id"], "shown")
+        st.session_state[prefill_key] = display
+        st.session_state.pop(f"{prefill_key.removesuffix('_prefill')}_editing", None)
+        self._save_state(room, state)
         return True
+
+    def _flush_events(self, room: Room, state: Dict[str, object]) -> None:
+        pending = state.get("question_events_pending") or []
+        if not pending:
+            return
+        try:
+            events = QuestionEvents()
+            for event in pending:
+                events.record(event)
+        except Exception:
+            st.warning("Question statistics could not be saved yet; they will be retried.")
+            return
+        state["question_events_pending"] = []
+        self.game_service.set_state(room, state)
 
     def _save_state(self, room: Room, state: Dict[str, object]) -> None:
         self.game_service.set_state(room, state)
+        self._flush_events(room, state)
         common.rerun()
 
     def _is_duplicate_answer(

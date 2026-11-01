@@ -1,7 +1,9 @@
-streamlit==1.45.1
+streamlit==1.66.1
 streamlit-tags==1.2.8
 openai>=1.51.0
 python-dotenv==1.0.1
 gspread==6.0.0
 oauth2client
 redis>=7.4.0
+
+psycopg[binary]>=3.2,<4
