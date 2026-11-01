@@ -110,8 +110,8 @@ class Router:
         if not room:
             return
         target_model = getattr(room.settings, "llm_model", None) or "gpt-4o-mini"
-        current_model = getattr(getattr(self.game_flow.llm_service, "_llm", None), "model_name", None)
-        if current_model == target_model:
+        current_model = getattr(getattr(self.game_flow.llm_service, "_llm", None), "selection_name", None)
+        if current_model == target_model.lower():
             return
         self.game_flow.llm_service = LLMService(llm_name=target_model)
 

@@ -79,6 +79,8 @@ def style_buttons() -> None:
           const aiColor = '#ea8600';
           const magicColor = '#a73ac9';
           const loveColor = '#cd0487' ;
+          const savedColor = '#6b7280';
+          const editColor = '#795548';
           const paint = () => {
             const buttons = root.querySelectorAll('button');
             buttons.forEach((btn) => {
@@ -90,6 +92,8 @@ def style_buttons() -> None:
               } else if (
                 label.includes('back') || 
                 label.includes('change room') || 
+                label.includes('change theme') ||
+                label.includes('change level') ||
                 label.includes('return') ||
                 label.includes('switch account') ||
                 label.includes('report')
@@ -112,7 +116,13 @@ def style_buttons() -> None:
                 label.includes('regenerate')
               ) {
                 bg = aiColor;
-              } else if (label.includes('like')
+              } else if (label.includes('edit question')) {
+                bg = editColor;
+              } else if (label.includes('saved for your turn')) {
+                bg = savedColor;
+              } else if (
+                label.includes('like') ||
+                label.includes('save for my turn')
               ) {
                 bg = loveColor;
               } else if (

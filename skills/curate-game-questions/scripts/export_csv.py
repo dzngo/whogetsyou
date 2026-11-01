@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 DIRECTORY = ROOT / "storage/curated_question_bank"
-FIELDS = ("id", "text", "level", "themes", "approved_at")
+FIELDS = ("id", "text", "display_template", "level", "themes", "approved_at")
 
 
 def main():

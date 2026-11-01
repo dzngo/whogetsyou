@@ -19,7 +19,7 @@ Celebrate how well friends “get” one another.
 Each round follows this flow:
 1. **Theme selection** — Storyteller picks a theme (always dynamic).
 2. **Level selection** — Storyteller picks depth: **Shallow** or **Deep**.
-3. **Question proposal** — AI suggests a question; Storyteller can edit, regenerate, rephrase, then confirm.
+3. **Question proposal** — A curated question is sampled; the Storyteller can edit, change, then confirm. Listeners can save questions for later turns.
 4. **Answer entry** —
    - Storyteller submits the Storyteller answer.
    - Each listener submits one plausible answer.
@@ -67,11 +67,10 @@ Landing screen with two actions:
 - **Join room**
 
 ### 2.2 Host Flow
-1. **Host name**
-2. **Room name**
+1. **Host name and room name**
    - If room exists: host can **Reuse room** or **Change settings**
-3. **Language + LLM selection**
-4. **Lobby**
+2. **Language + LLM selection**
+3. **Lobby**
    - Shows room summary and connected players
    - Allows max-score update and player removal
    - Start button enabled when at least 3 players are connected
@@ -93,8 +92,15 @@ Persistent board elements:
 Phases:
 1. **Theme Selection** — Storyteller only
 2. **Level Selection** — Storyteller only (Shallow/Deep)
-3. **Question Proposal** — Storyteller can edit/regenerate/rephrase/confirm
+3. **Question Proposal** — Storyteller can edit/change/confirm
 4. **Answer Entry** — Every player submits one answer; no author names shown here
 5. **Guessing** — Listeners guess the Storyteller answer from all submitted answers
 6. **Reveal & Scoring** — Show Storyteller answer, listener guesses, and per-round point deltas
 7. **Results** — Final scoreboard and winners
+
+
+## Question bank and statistics
+
+Gameplay reads `storage/curated_question_bank/questions.json`. Selection starts uniformly among eligible questions. After five consecutive skips in a turn, Gemini proposes an internal search question and OpenAI embeddings rank eligible bank questions; the five closest are shown one at a time. Failures fall back to random sampling. Aggregate statistics do not yet affect sampling. Each game keeps per-player seen and saved questions and a game-wide list of confirmed questions. Saved questions retain the displayed text and can be played again.
+
+Question events persist separately from room state. Development (the default `WGY_ENV=development`) writes to `storage/question_events_dev.sqlite3`. For production, set `WGY_ENV=production` and `QUESTION_STATS_DATABASE_URL` to a Neon PostgreSQL connection string with permission to create and insert into `question_events`; install the dependencies in `requirements.txt`. Never use the production URL for development. The `question_events` table stores anonymous action events, question IDs, timestamps, and unique event IDs, not names, answers, or edited text. The `question_counters` database view provides per-question counts, including zero-count entries for the current bank, and `question_text` contains the original bank `text`, not `display_template`, translated text, or a player-edited version. It is calculated from the events, so existing events are included and retries cannot inflate counts. The catalog is synchronized at app startup and when bank IDs or original question texts change. Assisted sampling requires GOOGLE_API_KEY, OPENAI_API_KEY, and the matching `storage/curated_question_bank/embeddings.sqlite3` vector cache; rebuild the cache when the bank changes using `python skills/curate-game-questions/scripts/neighbours.py --sync`. Events awaiting a temporary database recovery are retained in the room state and retried. The room JSON file itself must also be placed on persistent storage; it is not a multi-instance database.

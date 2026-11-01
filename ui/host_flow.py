@@ -60,9 +60,7 @@ class HostFlow:
 
     def render(self) -> None:
         step = self.state["step"]
-        if step == "host_name":
-            self._render_host_name()
-        elif step == "room_name":
+        if step in ("host_name", "room_name"):
             self._render_room_name()
         elif step == "existing_room_decision":
             self._render_existing_room_decision()
@@ -75,27 +73,10 @@ class HostFlow:
             self.reset()
             common.rerun()
 
-    def _render_host_name(self) -> None:
-        state = self.state
-        st.subheader("Your name")
-        host_name = st.text_input("Host name", value=state["host_name"])
-        col1, col2 = st.columns(2)
-        if col1.button("Back", key="host_name_back"):
-            self.reset()
-            st.session_state["route"] = "entry"
-            common.rerun()
-        if col2.button("Next", key="host_name_next"):
-            cleaned = host_name.strip()
-            if not cleaned:
-                st.error("Please enter your name.")
-                return
-            state["host_name"] = cleaned
-            state["step"] = "room_name"
-            common.rerun()
-
     def _render_room_name(self) -> None:
         state = self.state
         st.subheader("Room setup")
+        host_name = st.text_input("Your name", value=state["host_name"])
         name = st.text_input("Room name", value=state["room_name"])
         is_private = st.checkbox("Private room", value=bool(state.get("is_private", False)))
         help_text = (
@@ -106,13 +87,19 @@ class HostFlow:
         st.caption(help_text)
         col1, col2 = st.columns(2)
         if col1.button("Back", key="room_name_back"):
-            state["step"] = "host_name"
+            self.reset()
+            st.session_state["route"] = "entry"
             common.rerun()
         if col2.button("Next", key="room_name_next"):
+            cleaned_host = host_name.strip()
+            if not cleaned_host:
+                st.error("Please enter your name.")
+                return
             cleaned = name.strip()
             if not cleaned:
                 st.error("Please enter a room name.")
                 return
+            state["host_name"] = cleaned_host
             state["room_name"] = cleaned
             state["is_private"] = is_private
             existing = self.room_service.get_room_by_name(cleaned)

@@ -62,7 +62,7 @@ class AnswerSuggestionTrace:
 class LLMService:
     """High-level helper that orchestrates all LLM calls."""
 
-    TRANSLATION_MODEL = "gpt-5.4-nano"
+    TRANSLATION_MODEL = "gemini-3.5-flash-lite-high"
     DEFAULT_CANDIDATE_COUNT = 5
     RECENT_ANGLE_EXCLUSION_COUNT = 3
 

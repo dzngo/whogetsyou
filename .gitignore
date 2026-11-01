@@ -181,3 +181,6 @@ cache/
 # Local credentials
 .streamlit/secrets.toml
 gen-lang-client-0837774066-3aea0adf827d.json
+
+# Local question statistics
+storage/question_events_dev.sqlite3*

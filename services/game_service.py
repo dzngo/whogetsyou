@@ -41,6 +41,8 @@ class GameService:
         return room
 
     def end_game(self, room: Room) -> Room:
+        if (room.game_state or {}).get("question_events_pending"):
+            raise RuntimeError("Question statistics are still pending; retry before leaving the game.")
         room.started = False
         room.game_state = {}
         room.update_timestamp()
@@ -62,6 +64,13 @@ class GameService:
             "current_candidate_index": 0,
             "question_history": {},
             "angle_history": {},
+            "question_seen_by_player": {},
+            "question_preference_history": {},
+            "consecutive_question_skips": 0,
+            "assisted_candidate_ids": [],
+            "confirmed_question_ids": [],
+            "saved_questions_by_player": {},
+            "question_events_pending": [],
             "answer_submissions": {},
             "multiple_choice": {"options": []},
             "listener_guesses": {},
@@ -89,11 +98,16 @@ class GameService:
         state["selected_level"] = None
         state["question"] = None
         state["question_autogen_attempted"] = False
+        state["consecutive_question_skips"] = 0
+        state["assisted_candidate_ids"] = []
         state["question_candidates"] = []
         state["current_candidate_index"] = 0
         state["answer_submissions"] = {}
         state["multiple_choice"] = {"options": []}
         state["listener_guesses"] = {}
         state["round_summary"] = None
-        state["phase"] = "theme_selection"
+        order = state.get("storyteller_order") or []
+        storyteller_id = order[state["turn_index"] % len(order)] if order else None
+        saved = (state.get("saved_questions_by_player") or {}).get(storyteller_id, [])
+        state["phase"] = "saved_questions" if saved else "theme_selection"
         return self.set_state(room, state)

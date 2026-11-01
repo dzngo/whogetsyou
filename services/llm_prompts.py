@@ -36,8 +36,9 @@ Use the rules below to keep questions and answers safe, inclusive, and emotional
 Always return JSON that matches the provided schema for the current task."""
 
 TRANSLATION_SYSTEM_PROMPT = (
-    "You are a concise translator. Translate only according to the user's instructions. "
-    "Preserve meaning, intent, and format. Do not add new ideas, examples, explanations, labels, markdown, or extra questions. "
+    "You are a translator for a conversational party game. Preserve the original meaning and intent, "
+    "but use natural, idiomatic wording in the target language rather than translating word for word. "
+    "Do not add new ideas, examples, explanations, labels, markdown, or extra questions. "
     "Always return JSON that matches the provided schema for the current task."
 )
 
@@ -115,9 +116,12 @@ def build_translation_prompt(text: str, source_language: str, target_language: s
     return (
         f"Translate the following text from {source_name} to {target_name}.\n"
         "Rules:\n"
-        "- Preserve the original meaning, intent, tone, and format.\n"
-        "- Make it natural and playable in the target language.\n"
+        "- Preserve the original meaning, intent, and tone.\n"
+        "- Rewrite freely as needed to sound natural and idiomatic in the target language; avoid word-for-word translation.\n"
+        "- Keep the result concise and playable.\n"
         "- Preserve whether the text is a question or an answer.\n"
+        "- English 'themselves' can refer to one person, such as the storyteller; preserve the intended singular or plural meaning from context.\n"
+        "- Preserve each person's name exactly as written; do not translate or replace names.\n"
         "- Do not add examples, explanations, labels, markdown, or extra questions.\n"
         "- Return only the translated text in JSON.\n"
         f"Text:\n{text}\n"
