@@ -143,10 +143,11 @@ class RoomService:
                 return player
         raise PlayerNotFoundError(f"Player {player_id} does not exist in room {room.room_code}.")
 
-    def update_max_score(self, room: Room, max_score: int) -> Room:
+    def update_max_score(self, room: Room, max_score: int, *, customized: bool = True) -> Room:
         if max_score < 1:
             raise InvalidRoomSettingsError("Max score must be a positive number.")
         room.settings.max_score = max_score
+        room.settings.max_score_customized = customized
         room.update_timestamp()
         self.repository.save(room)
         return room

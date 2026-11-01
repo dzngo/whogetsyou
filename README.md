@@ -10,13 +10,13 @@ Celebrate how well friends “get” one another.
 2. One player becomes the Host, creates/reuses a room, and sets:
    - **Language**
    - **LLM provider/model**
-   - **Target score** (default 100, editable in lobby)
+   - **Target score** (default 10 for two players and 100 for standard mode, editable in lobby)
 3. Host shares room code; others join.
-4. Minimum players to start: **3**.
+4. Minimum players to start: **2**. Exactly two players use two-player mode; three or more use standard mode.
 5. Storyteller order is randomized once at game start, then rotates every round.
 
 ### 1.3 Turn Structure
-Each round follows this flow:
+In standard mode, each round follows this flow:
 1. **Theme selection** — Storyteller picks a theme (always dynamic).
 2. **Level selection** — Storyteller picks depth: **Shallow** or **Deep**.
 3. **Question proposal** — A curated question is sampled; the Storyteller can edit, change, then confirm. Listeners can save questions for later turns.
@@ -34,7 +34,10 @@ Question styles:
 - **Random 🎲**: wildcard theme for surprising questions.
 
 ### 1.4 Scoring Details
-Depth multiplier:
+
+In two-player mode, both players submit answers privately. The Storyteller judges the Listener's answer; a correct Shallow answer earns the Listener 1 point and a correct Deep answer earns 3. Matching answers are allowed. The target is checked after both players have had an equal number of Listener turns. The highest score wins, or equal scores tie. Incomplete rounds award no points.
+
+Standard mode depth multiplier:
 - **Shallow = x1**
 - **Deep = x2**
 
@@ -54,7 +57,7 @@ Decoy bonus (stacks with base scoring):
   - `+N × Mult`
 
 ### 1.5 End Conditions
-- Any player reaches/exceeds target score.
+- Standard mode: any player reaches/exceeds the target score. Two-player mode: the target is reached and both players have had equal Listener turns.
 - Host clicks **End game** (current top score wins).
 
 ---
@@ -73,7 +76,7 @@ Landing screen with two actions:
 3. **Lobby**
    - Shows room summary and connected players
    - Allows max-score update and player removal
-   - Start button enabled when at least 3 players are connected
+   - Start button enabled when at least 2 players are connected
 
 ### 2.3 Join Flow
 1. **Room code**
@@ -89,7 +92,7 @@ Persistent board elements:
 - Current round/theme/level
 - “You are playing as …” identity cue
 
-Phases:
+Standard mode phases:
 1. **Theme Selection** — Storyteller only
 2. **Level Selection** — Storyteller only (Shallow/Deep)
 3. **Question Proposal** — Storyteller can edit/change/confirm
@@ -97,6 +100,8 @@ Phases:
 5. **Guessing** — Listeners guess the Storyteller answer from all submitted answers
 6. **Reveal & Scoring** — Show Storyteller answer, listener guesses, and per-round point deltas
 7. **Results** — Final scoreboard and winners
+
+In two-player mode, both players submit answers, then the Storyteller judges the Listener's answer before reveal. The final results show each player's Listener accuracy and correct answers by level.
 
 
 ## Question bank and statistics

@@ -199,15 +199,15 @@ A round whose answers have been revealed and scored. Game Statistics should use 
 _Avoid_: Current round, partial round
 
 **Mind Reader**:
-A Game Statistic for the player with the most correct listener guesses across Completed Rounds.
+A Game Statistic for the player with the highest percentage of correct listener guesses among players who submitted at least one guess across Completed Rounds.
 _Avoid_: Best guesser
 
 **Wrong With Confident**:
-A Game Statistic for the player with the fewest correct listener guesses among players who made listener guesses across Completed Rounds.
+A Game Statistic for the player with the lowest percentage of correct listener guesses among players who submitted at least one guess across Completed Rounds. Show all players tied at the exact rate, with the percentage after each name; a missing guess is not an attempt.
 _Avoid_: Worst guesser, does not understand others
 
 **Best Impostor**:
-A Game Statistic for the player whose listener answers were selected by other listeners the most across Completed Rounds.
+A Game Statistic for the player whose listener answers were selected in the highest percentage of eligible guesses by other listeners across Completed Rounds. An eligible guess is a submitted guess by another listener in a round where that player's answer was available; missing guesses and the player's own guesses are excluded. Show all players tied at the exact rate.
 _Avoid_: Most misleading player
 
 **404 Personality**:

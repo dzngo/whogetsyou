@@ -6,12 +6,14 @@ import copy
 import html
 import random
 import uuid
+from fractions import Fraction
 from typing import Dict, List, Optional
 
 import streamlit as st
 
 from models import DEFAULT_THEMES, Level, Player, Room
 from services.game_service import GameService
+from services.two_player_game import judge_answer, player_statistics
 from services.assisted_sampling import assisted_candidates
 from services.llm_service import LLMService
 from services.room_service import RoomService
@@ -80,6 +82,7 @@ class GameFlow:
             "theme_selection",
             "level_selection",
             "question_generation",
+            "judgment",
             "reveal",
         }
         should_watch_for_updates = (
@@ -109,10 +112,15 @@ class GameFlow:
             self._render_question_phase(room, state, storyteller_id, current_player_id)
         elif phase == "answer_entry":
             self._render_answer_phase(room, state, storyteller_id, current_player_id, is_host)
+        elif phase == "judgment":
+            self._render_two_player_judgment(room, state, storyteller_id, current_player_id)
         elif phase == "guessing":
             self._render_guess_phase(room, state, storyteller_id, current_player_id, is_host)
         elif phase == "reveal":
-            self._render_reveal_phase(room, state, storyteller_id, current_player_id, is_host)
+            if state.get("game_mode") == "two_player":
+                self._render_two_player_reveal(room, state, storyteller_id, current_player_id, is_host)
+            else:
+                self._render_reveal_phase(room, state, storyteller_id, current_player_id, is_host)
         elif phase == "results":
             self._render_results(room, state, is_host)
         else:
@@ -461,7 +469,7 @@ class GameFlow:
         current_player = lookup.get(current_player_id)
         current_player_label = current_player.name if current_player else "Player"
         current_level = self._current_level_value(state)
-        input_key = f"{room.room_code}_answer_input_{current_player_id}"
+        input_key = f"{room.room_code}_answer_input_{current_player_id}_{state.get('round', 1)}"
         prefill_key = f"{input_key}_prefill"
         if input_key not in st.session_state:
             st.session_state[input_key] = submissions.get(current_player_id, "")
@@ -470,6 +478,8 @@ class GameFlow:
 
         if current_player_id == storyteller_id:
             st.caption("You are the Storyteller. Submit your answer.")
+        elif state.get("game_mode") == "two_player":
+            st.caption("Answer as you think the Storyteller would.")
         else:
             st.caption("Submit one plausible answer. Do not reveal whether it is yours.")
 
@@ -505,9 +515,12 @@ class GameFlow:
         if pending_count > 0:
             st.info(f"Waiting for {pending_count} player(s) to submit answers.")
         else:
-            st.info("All answers submitted. Moving to guessing...")
+            message = ("All answers submitted. Moving to judgment..." if state.get("game_mode") == "two_player"
+                       else "All answers submitted. Moving to guessing...")
+            st.info(message)
 
-        if is_host and st.button("Force guessing phase", key="host_force_guessing"):
+        if (state.get("game_mode") != "two_player" and is_host
+                and st.button("Force guessing phase", key="host_force_guessing")):
             state["multiple_choice"] = {
                 "options": self._build_options_from_submissions(
                     room=room,
@@ -536,7 +549,8 @@ class GameFlow:
         storyteller_id: Optional[str],
     ) -> None:
         col1, col2 = st.columns(2)
-        if col2.button("Suggest answer", key=f"{room.room_code}_suggest_answer_{current_player_id}"):
+        if (state.get("game_mode") != "two_player"
+                and col2.button("Suggest answer", key=f"{room.room_code}_suggest_answer_{current_player_id}")):
             try:
                 with st.spinner("Suggesting answer..."):
                     resp = self.llm_service.suggest_answer(
@@ -563,7 +577,7 @@ class GameFlow:
                 st.error("Answer cannot be empty.")
                 return
             other_answers = [text for pid, text in submissions.items() if pid != current_player_id and text.strip()]
-            if self._is_duplicate_answer(
+            if state.get("game_mode") != "two_player" and self._is_duplicate_answer(
                 candidate=answer,
                 existing_answers=other_answers,
                 question=question,
@@ -576,17 +590,82 @@ class GameFlow:
             state["answer_submissions"] = submissions
             st.session_state.pop(editing_key, None)
             if len(submissions) >= len(room.players):
-                state["multiple_choice"] = {
-                    "options": self._build_options_from_submissions(
-                        room=room,
-                        storyteller_id=storyteller_id,
-                        submissions=submissions,
-                    )
-                }
-                state["listener_guesses"] = {}
                 state["round_summary"] = None
-                state["phase"] = "guessing"
+                if state.get("game_mode") == "two_player":
+                    state["phase"] = "judgment"
+                else:
+                    state["multiple_choice"] = {
+                        "options": self._build_options_from_submissions(
+                            room=room, storyteller_id=storyteller_id, submissions=submissions,
+                        )
+                    }
+                    state["listener_guesses"] = {}
+                    state["phase"] = "guessing"
             self._save_state(room, state)
+
+    def _render_two_player_judgment(
+        self, room: Room, state: Dict[str, object], storyteller_id: Optional[str], current_player_id: Optional[str]
+    ) -> None:
+        st.subheader("Storyteller's decision")
+        question = (state.get("question") or {}).get("question", "")
+        st.write(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
+        if not self._storyteller_can_act(storyteller_id, current_player_id):
+            st.info("Waiting for the Storyteller to review the answers.")
+            return
+        listeners = [player for player in room.players if player.player_id != storyteller_id]
+        submissions = state.get("answer_submissions") or {}
+        if len(listeners) != 1 or storyteller_id not in submissions or listeners[0].player_id not in submissions:
+            st.warning("Both players must submit an answer before judgment.")
+            return
+        listener = listeners[0]
+        with st.container(border=True):
+            st.write("**Your answer**")
+            st.write(submissions[storyteller_id])
+            st.write(f"**{listener.name}'s answer**")
+            st.write(submissions[listener.player_id])
+        st.write("Does the Listener's answer match what you meant?")
+        correct_col, incorrect_col = st.columns(2)
+        if correct_col.button("Correct", key=f"{room.room_code}_judgment_correct"):
+            judge_answer(state, storyteller_id, listener.player_id, True)
+            self._save_state(room, state)
+        if incorrect_col.button("Not quite", key=f"{room.room_code}_judgment_incorrect"):
+            judge_answer(state, storyteller_id, listener.player_id, False)
+            self._save_state(room, state)
+
+    def _render_two_player_reveal(
+        self, room: Room, state: Dict[str, object], storyteller_id: Optional[str],
+        current_player_id: Optional[str], is_host: bool,
+    ) -> None:
+        st.subheader("Reveal & scoring")
+        question = (state.get("question") or {}).get("question", "")
+        st.write(f"**Question:** {question}")
+        self._render_save_question(room, state, storyteller_id, current_player_id)
+        summary = state.get("round_summary") or {}
+        if not summary:
+            st.warning("This round has not been judged.")
+            return
+        lookup = self._player_lookup(room)
+        listener = lookup.get(summary.get("listener_id"))
+        storyteller = lookup.get(storyteller_id)
+        answers = state.get("answer_submissions") or {}
+        with st.container(border=True):
+            st.write(f"**{storyteller.name if storyteller else 'Storyteller'}:** {answers.get(storyteller_id, '')}")
+            st.write(f"**{listener.name if listener else 'Listener'}:** {answers.get(summary.get('listener_id'), '')}")
+            st.write("**Correct!**" if summary.get("correct") else "**Not quite**")
+            st.write(f"{listener.name if listener else 'Listener'}: +{summary.get('points', 0)} points")
+        if summary.get("winners"):
+            st.success("Game complete! Both players have had the same number of Listener turns.")
+            if ((current_player_id == storyteller_id) or is_host) and st.button("View final results"):
+                state["phase"] = "results"
+                state["winners"] = summary["winners"]
+                state["end_reason"] = f"Target score of {state['max_score']} reached after equal Listener turns."
+                self._save_state(room, state)
+            return
+        if (current_player_id == storyteller_id) or is_host:
+            if st.button("Next turn"):
+                self.game_service.prepare_next_turn(room, advance_round=True)
+                common.rerun()
 
     def _render_guess_phase(
         self,
@@ -764,11 +843,15 @@ class GameFlow:
             winner_names = [lookup[pid].name for pid, score in scoreboard if score == top_score and pid in lookup]
 
         reason_html = f"<div class='wg-results-reason'>{html.escape(str(reason))}</div>" if reason else ""
-        champion_label = "Champions" if len(winner_names) > 1 else "Champion"
+        if state.get("game_mode") == "two_player":
+            champion_label = "It's a tie!" if len(winner_names) > 1 else "Champion"
+        else:
+            champion_label = "Champions" if len(winner_names) > 1 else "Champion"
         champion_names = " + ".join(html.escape(name) for name in winner_names) if winner_names else "No winner"
         champion_score = max((score for _, score in scoreboard), default=0)
         ranking_html = self._build_arcade_ranking_html(scoreboard, lookup)
-        stats_html = self._build_arcade_statistics_html(room, state)
+        stats_html = (self._build_two_player_statistics_html(room, state) if state.get("game_mode") == "two_player"
+                      else self._build_arcade_statistics_html(room, state))
 
         st.markdown(
             f"""
@@ -1025,18 +1108,50 @@ class GameFlow:
         lookup: Dict[str, Player],
     ) -> str:
         rows: List[str] = []
+        previous_score = None
+        rank = 0
         for index, (pid, score) in enumerate(scoreboard, start=1):
+            if score != previous_score:
+                rank = index
+            previous_score = score
             player = lookup.get(pid)
             if not player:
                 continue
             rows.append(
                 "<div class='wg-results-rank-row'>"
-                f"<div class='wg-results-rank-number'>#{index}</div>"
+                f"<div class='wg-results-rank-number'>#{rank}</div>"
                 f"<div class='wg-results-rank-name'>{html.escape(player.name)}</div>"
                 f"<div class='wg-results-rank-score'>{score} pts</div>"
                 "</div>"
             )
         return "".join(rows) or "<div class='wg-results-empty'>No scores recorded.</div>"
+
+    def _build_two_player_statistics_html(self, room: Room, state: Dict[str, object]) -> str:
+        if not state.get("completed_rounds"):
+            return ("<section class='wg-results-panel'><div class='wg-results-section-title'>"
+                    "💬 How well did you get each other?</div>"
+                    "<div class='wg-results-empty'>No completed rounds yet.</div></section>")
+        cards = []
+        totals = []
+        for player in room.players:
+            stats = player_statistics(state, player.player_id)
+            totals.append(stats)
+            accuracy = f"{stats['accuracy'] * 100:.0f}%" if stats['accuracy'] is not None else "—"
+            cards.append(
+                "<div class='wg-results-stat-card'>"
+                f"<div class='wg-results-stat-title'>{html.escape(player.name)} as Listener</div>"
+                f"<div class='wg-results-stat-value'>{stats['correct']} of {stats['turns']} correct · {accuracy}</div>"
+                f"<div class='wg-results-stat-subtitle'>Shallow: {stats['shallow']} · Deep: {stats['deep']}</div>"
+                "</div>"
+            )
+        turns = sum(stats['turns'] for stats in totals)
+        correct = sum(stats['correct'] for stats in totals)
+        shared = f"{correct / turns * 100:.0f}%" if turns else "—"
+        return ("<section class='wg-results-panel'>"
+                "<div class='wg-results-section-title'>💬 How well did you get each other?</div>"
+                f"<div class='wg-results-stat-grid'>{''.join(cards)}</div>"
+                f"<div class='wg-results-stat-subtitle'>Shared understanding: {shared} ({correct} of {turns} correct)</div>"
+                "</section>")
 
     def _build_arcade_statistics_html(self, room: Room, state: Dict[str, object]) -> str:
         stats = self._compute_game_statistics(room, state)
@@ -1050,18 +1165,18 @@ class GameFlow:
         stat_cards = [
             (
                 "🧠 Mind Reader",
-                "Most correct guesses",
+                "Highest correct-guess accuracy",
                 self._format_stat_winners(stats["mind_reader"], "correct guess"),
             ),
             (
                 "🙃 Wrong With Confident",
-                "Fewest correct guesses",
-                self._format_stat_winners(stats["wrong_with_confident"], "correct guess", lower_is_better=True),
+                "Lowest correct-guess accuracy",
+                self._format_accuracy_names(stats["wrong_with_confident"]),
             ),
             (
                 "🎭 Best Impostor",
-                "Fooled the most players",
-                self._format_stat_winners(stats["best_impostor"], "fooled guess"),
+                "Highest decoy success rate",
+                self._format_decoy_ratio(stats["best_impostor"]),
             ),
             (
                 "🧩 404 Personality",
@@ -1114,6 +1229,7 @@ class GameFlow:
         correct_guess_counts = {player.player_id: 0 for player in room.players}
         listener_guess_counts = {player.player_id: 0 for player in room.players}
         decoy_pick_counts = {player.player_id: 0 for player in room.players}
+        decoy_opportunities = {player.player_id: 0 for player in room.players}
         storyteller_correct_counts = {player.player_id: 0 for player in room.players}
         storyteller_guess_totals = {player.player_id: 0 for player in room.players}
         bestie_counts = {
@@ -1139,36 +1255,68 @@ class GameFlow:
                 storyteller_guess_totals[storyteller_id] += len(listener_ids)
                 storyteller_correct_counts[storyteller_id] += len(correct_ids)
             for pid in correct_ids:
-                if pid in correct_guess_counts:
+                if pid in correct_guess_counts and pid in guesses:
                     correct_guess_counts[pid] += 1
                 if storyteller_id in bestie_counts and pid in bestie_counts[storyteller_id]:
                     bestie_counts[storyteller_id][pid] += 1
-            for pid, count in (round_record.get("decoy_picks") or {}).items():
-                if pid in decoy_pick_counts:
-                    decoy_pick_counts[pid] += int(count or 0)
+            options = round_record.get("options") or []
+            options_by_label = {option.get("label"): option for option in options}
+            decoy_owners = {
+                option.get("owner_id") for option in options
+                if option.get("kind") == "listener" and option.get("owner_id") in decoy_opportunities
+            }
+            for guesser_id, guess in guesses.items():
+                if guesser_id not in listener_ids:
+                    continue
+                selected = options_by_label.get(guess.get("label"))
+                if not selected:
+                    continue
+                for owner_id in decoy_owners:
+                    if owner_id != guesser_id:
+                        decoy_opportunities[owner_id] += 1
+                owner_id = selected.get("owner_id")
+                if owner_id in decoy_owners and owner_id != guesser_id:
+                    decoy_pick_counts[owner_id] += 1
 
         storyteller_rates: Dict[str, float] = {}
         for pid, guess_total in storyteller_guess_totals.items():
             if guess_total:
                 storyteller_rates[pid] = storyteller_correct_counts[pid] / guess_total
 
+        accuracy = {
+            pid: Fraction(correct_guess_counts[pid], count)
+            for pid, count in listener_guess_counts.items()
+            if count > 0 and pid in lookup
+        }
+        wrong_with_confident = self._accuracy_stat(accuracy, lookup, lowest=True)
+        decoy_rates = {
+            pid: Fraction(decoy_pick_counts[pid], count)
+            for pid, count in decoy_opportunities.items()
+            if count > 0 and pid in lookup
+        }
+        best_impostor = self._accuracy_stat(decoy_rates, lookup)
+        best_impostor["ratios"] = {
+            lookup[pid].name: (decoy_pick_counts[pid], decoy_opportunities[pid]) for pid in decoy_rates
+        }
         return {
             "completed_round_count": len(completed_rounds),
             "group_telepathy_score": (total_correct / total_guesses * 100) if total_guesses else 0,
-            "mind_reader": self._top_stat_entries(correct_guess_counts, lookup),
-            "wrong_with_confident": self._top_stat_entries(
-                {
-                    pid: correct_guess_counts.get(pid, 0)
-                    for pid, guess_count in listener_guess_counts.items()
-                    if guess_count > 0
-                },
-                lookup,
-                lower_is_better=True,
-            ),
-            "best_impostor": self._top_stat_entries(decoy_pick_counts, lookup),
+            "mind_reader": self._accuracy_stat(accuracy, lookup),
+            "wrong_with_confident": wrong_with_confident,
+            "best_impostor": best_impostor,
             "personality_404": self._top_stat_entries(storyteller_rates, lookup, lower_is_better=True),
             "no_incognito_mode": self._top_stat_entries(storyteller_rates, lookup),
             "certified_besties": self._build_certified_bestie_lines(room, bestie_counts),
+        }
+
+    @staticmethod
+    def _accuracy_stat(accuracy: Dict[str, Fraction], lookup: Dict[str, Player], *, lowest: bool = False) -> dict:
+        if not accuracy:
+            return {"names": [], "value": None}
+        best = min(accuracy.values()) if lowest else max(accuracy.values())
+        return {
+            "names": sorted(lookup[pid].name for pid, rate in accuracy.items() if rate == best),
+            "value": float(best),
         }
 
     def _top_stat_entries(
@@ -1203,6 +1351,22 @@ class GameFlow:
             suffix = "time" if best_value == 1 else "times"
             lines.append(f"{player.name}: {', '.join(names)} ({best_value} {suffix})")
         return lines
+
+    @staticmethod
+    def _format_accuracy_names(stat: Dict[str, object]) -> str:
+        names = stat.get("names") or []
+        value = stat.get("value")
+        if not names or value is None:
+            return "Not enough data."
+        return "; ".join(f"{name} - {value:.0%}" for name in names)
+
+    @staticmethod
+    def _format_decoy_ratio(stat: Dict[str, object]) -> str:
+        names = stat.get("names") or []
+        ratios = stat.get("ratios") or {}
+        if not names:
+            return "Not enough data."
+        return "; ".join(f"{name} - {ratios[name][0]}/{ratios[name][1]}" for name in names)
 
     def _format_stat_winners(
         self,

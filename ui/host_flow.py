@@ -237,6 +237,10 @@ class HostFlow:
                 suffix = " (Host)" if player.role == PlayerRole.HOST else ""
                 st.write(f"- {player.name}{suffix}")
 
+        default_score = 10 if len(room.players) == 2 else 100
+        if not room.settings.max_score_customized and room.settings.max_score != default_score:
+            self.room_service.update_max_score(room, default_score, customized=False)
+            st.session_state["host_lobby_max_score"] = default_score
         st.markdown("### Game settings")
         with st.container(border=True):
             score = st.number_input(
@@ -269,9 +273,9 @@ class HostFlow:
             else:
                 st.caption("No players to remove.")
 
-        can_start = len(room.players) >= 3
+        can_start = len(room.players) >= 2
         if not can_start:
-            st.warning("At least three players are required to start the game.")
+            st.warning("At least two players are required to start the game.")
         else:
             if st.button("Start game"):
                 try:
@@ -305,6 +309,7 @@ class HostFlow:
         max_score = existing_room.settings.max_score if existing_room else 100
         return RoomSettings(
             max_score=max_score,
+            max_score_customized=existing_room.settings.max_score_customized if existing_room else False,
             language=state.get("language", "en"),
             llm_model=state.get("llm_model", "gemini-2.5-flash"),
         )

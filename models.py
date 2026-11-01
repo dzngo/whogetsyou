@@ -532,12 +532,14 @@ class Player:
 @dataclass
 class RoomSettings:
     max_score: int = 100
+    max_score_customized: bool = False
     language: str = "en"
     llm_model: str = "gemini-2.5-flash"
 
     def to_dict(self) -> Dict[str, object]:
         return {
             "max_score": self.max_score,
+            "max_score_customized": self.max_score_customized,
             "language": self.language,
             "llm_model": self.llm_model,
         }
@@ -546,6 +548,7 @@ class RoomSettings:
     def from_dict(cls, data: Dict[str, object]) -> "RoomSettings":
         return cls(
             max_score=int(data.get("max_score", 100)),
+            max_score_customized=bool(data.get("max_score_customized", int(data.get("max_score", 100)) != 100)),
             language=str(data.get("language", "en")),
             llm_model=str(data.get("llm_model", "gemini-2.5-flash")),
         )

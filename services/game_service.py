@@ -24,8 +24,10 @@ class GameService:
         self.room_service = room_service
 
     def start_game(self, room: Room) -> Room:
-        if len(room.players) < 3:
-            raise ValueError("At least three players are required to start the game.")
+        if len(room.players) < 2:
+            raise ValueError("At least two players are required to start the game.")
+        if not room.settings.max_score_customized:
+            room.settings.max_score = 10 if len(room.players) == 2 else 100
         order = [player.player_id for player in room.players]
         random.shuffle(order)
         room.started = True
@@ -55,6 +57,7 @@ class GameService:
             "turn_index": 0,
             "storyteller_order": order,
             "phase": "theme_selection",
+            "game_mode": "two_player" if len(room.players) == 2 else "standard",
             "selected_theme": None,
             "selected_level": None,
             "question": None,

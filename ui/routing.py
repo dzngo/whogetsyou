@@ -23,12 +23,20 @@ class Router:
 
         ---
 
-        ### How a round works
+        ### How a round works: 3 or more players
         1. **Pick the vibe** - The Storyteller chooses a theme and level: Shallow or Deep.
         2. **Get a question** - A question is proposed; the Storyteller can edit it or ask for a new one.
         3. **Write answers** - Every player submits one answer to the same question.
         4. **Everyone guesses** - Listeners choose the answer they think belongs to the Storyteller.
         5. **Reveal & points** - The Storyteller answer is shown, guesses are revealed, and points are awarded.
+
+        ---
+
+        ### Two-player mode
+        - Both players answer independently; matching answers are allowed.
+        - The Storyteller judges whether the Listener's answer is correct.
+        - Correct answers earn the Listener 1 point for Shallow or 3 points for Deep.
+        - Players alternate roles. The target is checked after equal Listener turns; equal top scores tie.
 
         ---
 
