@@ -4,7 +4,62 @@ const input = trigger({
   type: 'n8n-nodes-base.executeWorkflowTrigger', version: 1.2,
   config: { name: 'Campaign worker input', parameters: { inputSource: 'workflowInputs', workflowInputs: { values: [
     { name: 'campaign_id', type: 'string' },
+    { name: 'worker_execution_id', type: 'string' },
   ] } } },
+});
+
+const renewBeforeBatch = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Verify campaign worker before batch', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
+});
+
+const renewBeforeQuality = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Renew campaign worker before quality', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
+});
+
+const renewBeforeEmbedding = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Renew campaign worker before embedding', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
+});
+
+const renewBeforeSemantic = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Renew campaign worker before semantic', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
+});
+
+const renewBeforeMetadata = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Renew campaign worker before metadata', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
+});
+
+const renewBeforeCompletion = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Renew campaign worker before completion', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: "select case when nullif($2, '') is null then true else qb3.renew_campaign_worker($1, $2) end as worker_owned;",
+    options: { queryReplacement: expr("{{ [$('Campaign worker input').first().json.campaign_id, $('Campaign worker input').first().json.worker_execution_id || ''] }}") },
+  } },
 });
 
 const begin = node({
@@ -112,8 +167,11 @@ const complete = node({
   } },
 });
 
-const note = sticky('## One durable batch\nThis canvas is the end-to-end control surface for one internal batch. Open each stage to inspect every agent input, rendered prompt, raw response, structured response, decision, and database write.', [begin, snapshot, context, generate, quality, preflight, semantic, metadata, complete], { color: 5 });
+const note = sticky('## One durable batch\nThis canvas is the end-to-end control surface for one internal batch. The owning campaign worker renews its lease between long stages. Open each stage to inspect every agent input, rendered prompt, raw response, structured response, decision, and database write.', [renewBeforeBatch, begin, snapshot, context, generate, renewBeforeQuality, quality, renewBeforeEmbedding, preflight, renewBeforeSemantic, semantic, renewBeforeMetadata, metadata, renewBeforeCompletion, complete], { color: 5 });
 
 export default workflow('qb3-process-one-batch', 'Process one Question Bank batch')
-  .add(input).to(begin).to(snapshot).to(context).to(generate).to(quality).to(preflight).to(semantic).to(metadata).to(complete)
+  .add(input.to(renewBeforeBatch).to(begin).to(snapshot).to(context).to(generate)
+  .to(renewBeforeQuality).to(quality).to(renewBeforeEmbedding).to(preflight)
+  .to(renewBeforeSemantic).to(semantic).to(renewBeforeMetadata).to(metadata)
+  .to(renewBeforeCompletion).to(complete))
   .add(note);

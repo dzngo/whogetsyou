@@ -366,11 +366,11 @@ select * from qb3.mark_provider_attempt_unknown(
 do $$
 begin
   assert (
-    select status = 'unknown_spend'
+    select status = 'running'
       and reserved_usd = 0
       and unknown_spend_usd = 0.300000
     from qb3.campaigns where campaign_id = 'budget-test'
-  ), 'ambiguous attempt must stop campaign and preserve unknown spend';
+  ), 'ambiguous spend must remain budgeted without globally stopping safe work';
 end;
 $$;
 
@@ -656,11 +656,14 @@ select * from qb3.complete_batch(:'test_batch_id');
 do $$
 begin
   assert (
-    select state = 'operationally_unresolved'
-      and rejection_reason_codes = '["campaign_target_reached"]'::jsonb
+    select state = 'proposed'
     from qb3.candidates
     where campaign_id = 'admission-test' and candidate_index = 5
-  ), 'batch completion must terminalize surplus proposed candidates';
+  ), 'metadata-pending questions must not terminalize possible replacements';
+  assert (
+    select status = 'waiting_recovery'
+    from qb3.campaigns where campaign_id = 'admission-test'
+  ), 'an accepted-but-unready target must wait for metadata recovery';
 end;
 $$;
 
@@ -697,15 +700,14 @@ select * from qb3.complete_batch(:'level_terminality_batch_id');
 do $$
 begin
   assert (
-    select status = 'running'
+    select status = 'waiting_recovery'
     from qb3.campaigns where campaign_id = 'level-terminality-test'
-  ), 'a mixed campaign must remain running while one level target is unfinished';
+  ), 'a mixed campaign must wait for recoverable candidate work before generating replacements';
   assert (
-    select state = 'operationally_unresolved'
-      and rejection_reason_codes = '["level_target_reached"]'::jsonb
+    select state = 'proposed'
     from qb3.candidates
     where campaign_id = 'level-terminality-test' and level = 'shallow'
-  ), 'batch completion must terminalize surplus candidates for a completed level';
+  ), 'an accepted counter without a Ready Question cannot terminalize a level';
   assert (
     select state = 'proposed'
     from qb3.candidates
@@ -841,12 +843,14 @@ begin
     limit 1
   ), 'distribution snapshot must count accepted questions only';
   assert (
-    select (summary #>> '{levels,shallow}')::integer = 1
+    select (summary #>> '{levels,deep}')::integer = 1
+      and (summary #>> '{levels,shallow}')::integer = 0
+      and (summary ->> 'ready_total')::integer = 1
     from qb3.distribution_snapshots
     where campaign_id = 'admission-test'
     order by created_at desc
     limit 1
-  ), 'distribution snapshot must report level counts';
+  ), 'distribution dimensions must exclude admitted questions still missing metadata';
 end;
 $$;
 

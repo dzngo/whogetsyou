@@ -7,10 +7,18 @@ const input = trigger({
   ] } } },
 });
 
+const deterministicGate = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Reject deterministic shallow form failures', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: 'select * from qb3.apply_deterministic_shallow_gate($1::uuid);',
+    options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id] }}") },
+  } },
+});
+
 const qualityGroups = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Read quality groups of ten', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.get_quality_groups($1::uuid, false)) select group_index, candidates, true as has_items from groups union all select 0, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
+    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.claim_candidate_stage_groups($1::uuid, 'quality', 10, false)) select group_index, work_group_id, candidates, true as has_items from groups union all select 0, null::text, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id] }}") },
   } },
 });
@@ -30,13 +38,15 @@ const quality = node({
     workflowInputs: { mappingMode: 'defineBelow', value: {
       campaign_id: expr("{{ $('Quality stage input').item.json.campaign_id }}"), batch_id: expr("{{ $('Quality stage input').item.json.batch_id }}"),
       candidate_id: '', mission_id: '',
-      attempt_id: expr("{{ $('Quality stage input').item.json.batch_id + '-quality-' + $json.group_index }}"),
-      invocation_id: expr("{{ $('Quality stage input').item.json.batch_id + '-quality-' + $json.group_index }}"),
+      attempt_id: expr("{{ $json.work_group_id + '-quality' }}"),
+      invocation_id: expr("{{ $json.work_group_id + '-quality' }}"),
+      work_group_id: expr('{{ $json.work_group_id }}'),
       context: expr('{{ { candidates: $json.candidates } }}'),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string' }, { id: 'batch_id', displayName: 'batch_id', type: 'string' },
       { id: 'candidate_id', displayName: 'candidate_id', type: 'string' }, { id: 'mission_id', displayName: 'mission_id', type: 'string' },
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string' }, { id: 'invocation_id', displayName: 'invocation_id', type: 'string' },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string' },
       { id: 'context', displayName: 'context', type: 'object' },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
@@ -60,15 +70,15 @@ const applyQuality = node({
 const markQualityGroup = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Isolate failed quality group', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality', 'Quality provider attempts failed');",
-    options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('Read quality groups of ten').item.json.candidates.map(c => c.candidate_id))] }}") },
+    operation: 'executeQuery', query: "select * from qb3.finish_candidate_stage_group_failure($1, 'quality', $2, $3::boolean);",
+    options: { queryReplacement: expr("{{ [$('Read quality groups of ten').item.json.work_group_id, $('4. Quality Judge').item.json.reason || $('4. Quality Judge').item.json.status || 'invalid_quality_output', ['retryable_failure','unknown_spend'].includes($('4. Quality Judge').item.json.status) || $('4. Quality Judge').item.json.reason === 'openai_retry_exhausted'] }}") },
   } },
 });
 
 const uncertainGroups = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Read uncertain quality groups', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.get_quality_groups($1::uuid, true)) select group_index, candidates, true as has_items from groups union all select 0, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
+    operation: 'executeQuery', query: "with groups as materialized (select * from qb3.claim_candidate_stage_groups($1::uuid, 'quality', 10, true)) select group_index, work_group_id, candidates, true as has_items from groups union all select 0, null::text, '[]'::jsonb, false where not exists (select 1 from groups) order by group_index;",
     options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id] }}") },
   } },
 });
@@ -88,13 +98,15 @@ const escalation = node({
     workflowInputs: { mappingMode: 'defineBelow', value: {
       campaign_id: expr("{{ $('Quality stage input').item.json.campaign_id }}"), batch_id: expr("{{ $('Quality stage input').item.json.batch_id }}"),
       candidate_id: '', mission_id: '',
-      attempt_id: expr("{{ $('Quality stage input').item.json.batch_id + '-quality-escalation-' + $json.group_index }}"),
-      invocation_id: expr("{{ $('Quality stage input').item.json.batch_id + '-quality-escalation-' + $json.group_index }}"),
+      attempt_id: expr("{{ $json.work_group_id + '-quality-escalation' }}"),
+      invocation_id: expr("{{ $json.work_group_id + '-quality-escalation' }}"),
+      work_group_id: expr('{{ $json.work_group_id }}'),
       context: expr('{{ { candidates: $json.candidates } }}'),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string' }, { id: 'batch_id', displayName: 'batch_id', type: 'string' },
       { id: 'candidate_id', displayName: 'candidate_id', type: 'string' }, { id: 'mission_id', displayName: 'mission_id', type: 'string' },
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string' }, { id: 'invocation_id', displayName: 'invocation_id', type: 'string' },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string' },
       { id: 'context', displayName: 'context', type: 'object' },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
@@ -118,8 +130,8 @@ const applyEscalation = node({
 const markEscalationGroup = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Isolate failed escalation group', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'quality_escalation', 'Quality escalation provider attempts failed');",
-    options: { queryReplacement: expr("{{ [$('Quality stage input').item.json.batch_id, JSON.stringify($('Read uncertain quality groups').item.json.candidates.map(c => c.candidate_id))] }}") },
+    operation: 'executeQuery', query: "select * from qb3.finish_candidate_stage_group_failure($1, 'quality_escalation', $2, $3::boolean);",
+    options: { queryReplacement: expr("{{ [$('Read uncertain quality groups').item.json.work_group_id, $('5. Quality Escalation Agent').item.json.reason || $('5. Quality Escalation Agent').item.json.status || 'invalid_escalation_output', ['retryable_failure','unknown_spend'].includes($('5. Quality Escalation Agent').item.json.status) || $('5. Quality Escalation Agent').item.json.reason === 'openai_retry_exhausted'] }}") },
   } },
 });
 
@@ -131,7 +143,7 @@ const done = node({
   ] } } },
 });
 
-const note = sticky('## Quality\nCandidates are judged independently in groups of ten. Only uncertain cases receive one high-reasoning escalation. Provider failure isolates that group; it does not discard other candidates.', [qualityGroups, qualityLoop, quality, applyQuality, uncertainGroups, escalationLoop, escalation, applyEscalation], { color: 6 });
+const note = sticky('## Quality\nA free deterministic gate rejects clear shallow form failures first. Remaining candidates are judged independently in groups of ten. Only uncertain cases receive one escalation.', [deterministicGate, qualityGroups, qualityLoop, quality, applyQuality, uncertainGroups, escalationLoop, escalation, applyEscalation], { color: 6 });
 
 const escalationStage = uncertainGroups.to(uncertainGroupsAvailable
   .onTrue(escalationLoop
@@ -148,7 +160,7 @@ const qualityStage = qualityLoop
     .onDone(escalationStage);
 
 export default workflow('qb3-quality-stage', 'Evaluate Question Bank batch quality')
-  .add(input).to(qualityGroups).to(qualityGroupsAvailable
+  .add(input.to(deterministicGate).to(qualityGroups).to(qualityGroupsAvailable
     .onTrue(qualityStage)
-    .onFalse(escalationStage))
+    .onFalse(escalationStage)))
   .add(note);

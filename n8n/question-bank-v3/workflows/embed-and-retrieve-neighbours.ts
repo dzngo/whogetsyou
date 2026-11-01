@@ -10,6 +10,7 @@ const input = trigger({
     { name: 'question_text', type: 'string' },
     { name: 'reservation_usd', type: 'number' },
     { name: 'input_cost_per_million_usd', type: 'number' },
+    { name: 'work_group_id', type: 'string' },
   ] } } },
 });
 
@@ -22,6 +23,7 @@ const reserve = node({
       batch_id: expr("{{ $('Input').item.json.batch_id || '' }}"), candidate_id: expr("{{ $('Input').item.json.candidate_id }}"),
       parent_attempt_id: '', agent_role: 'embedding', provider: 'openai', requested_model: 'text-embedding-3-small',
       reasoning_setting: 'none', reservation_usd: expr("{{ $('Input').item.json.reservation_usd }}"),
+      work_group_id: expr("{{ $('Input').item.json.work_group_id }}"),
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -33,6 +35,7 @@ const reserve = node({
       { id: 'requested_model', displayName: 'requested_model', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
     ], attemptToConvertTypes: false, convertFieldsToString: true },
     options: { waitForSubWorkflow: true },
   } },
@@ -87,6 +90,14 @@ const embed = node({
     sendBody: true, contentType: 'json', specifyBody: 'json',
     jsonBody: expr("{{ { model: 'text-embedding-3-small', input: $('Input').item.json.question_text, dimensions: 1536, encoding_format: 'float' } }}"),
     options: { timeout: 60000, response: { response: { fullResponse: true, neverError: true, responseFormat: 'json' } } },
+  } },
+});
+
+const markSending = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Mark embedding request as possibly sent', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: 'select qb3.mark_provider_attempt_sending($1) as marked;',
+    options: { queryReplacement: expr("{{ [$('Input').item.json.attempt_id] }}") },
   } },
 });
 
@@ -162,7 +173,7 @@ const persistTrace = node({
   config: { name: 'Persist embedding invocation trace', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: "select * from qb3.persist_agent_run($1,$2,$3,$4::uuid,$5::uuid,null::uuid,'embedding','embedding','v1',$6,$7,$8::jsonb,$9,null);",
-    options: { queryReplacement: expr("{{ (() => { const response = $('OpenAI embedding — paid').item.json; const ok = response.statusCode === 200; const stored = ok ? $('Store vector and retrieve top 10').item.json : {}; return [$('Input').item.json.attempt_id, $('Input').item.json.attempt_id, $('Input').item.json.campaign_id, $('Input').item.json.batch_id, $('Input').item.json.candidate_id, $('Input').item.json.question_text, JSON.stringify({ statusCode: response.statusCode || null, model: response.body?.model || 'text-embedding-3-small', usage: response.body?.usage || {}, error: response.body?.error || response.error || response.message || null }), JSON.stringify(ok ? { status: 'succeeded', candidate_id: stored.candidate_id, neighbours: stored.neighbours || [] } : { status: 'failed', candidate_id: $('Input').item.json.candidate_id, transport_status: String(response.statusCode || '') ? 'retryable_failure' : 'failed' }), ok ? 'succeeded' : 'failed']; })() }}") },
+    options: { queryReplacement: expr("{{ (() => { const response = $('OpenAI embedding — paid').item.json; const code = Number(response.statusCode || 0); const ok = code === 200; const stored = ok ? $('Store vector and retrieve top 10').item.json : {}; const transport = !code ? 'unknown_spend' : [408,409,425,429,500,502,503,504].includes(code) ? 'retryable_failure' : 'configuration_failure'; return [$('Input').item.json.attempt_id, $('Input').item.json.attempt_id, $('Input').item.json.campaign_id, $('Input').item.json.batch_id, $('Input').item.json.candidate_id, $('Input').item.json.question_text, JSON.stringify({ statusCode: response.statusCode || null, model: response.body?.model || 'text-embedding-3-small', usage: response.body?.usage || {}, error: response.body?.error || response.error || response.message || null }), JSON.stringify(ok ? { status: 'succeeded', candidate_id: stored.candidate_id, neighbours: stored.neighbours || [] } : { status: 'failed', candidate_id: $('Input').item.json.candidate_id, transport_status: transport }), ok ? 'succeeded' : 'failed']; })() }}") },
   } },
 });
 
@@ -184,21 +195,20 @@ const returnStored = node({
 const returnFailure = node({
   type: 'n8n-nodes-base.set', version: 3.5,
   config: { name: 'Return traced embedding failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
-    { id: 'failed-status', name: 'status', value: 'failed', type: 'string' },
-    { id: 'failed-reason', name: 'reason', value: expr("{{ String($('OpenAI embedding — paid').item.json.statusCode || '') ? 'embedding_provider_failure' : 'embedding_transport_unknown' }}"), type: 'string' },
+    { id: 'failed-status', name: 'status', value: expr("{{ (() => { const code = Number($('OpenAI embedding — paid').item.json.statusCode || 0); return !code ? 'unknown_spend' : [408,409,425,429,500,502,503,504].includes(code) ? 'retryable_failure' : 'configuration_failure'; })() }}"), type: 'string' },
+    { id: 'failed-reason', name: 'reason', value: expr("{{ 'embedding_http_' + String($('OpenAI embedding — paid').item.json.statusCode || 'unknown') }}"), type: 'string' },
     { id: 'failed-candidate', name: 'candidate_id', value: expr("{{ $('Input').item.json.candidate_id }}"), type: 'string' },
   ] } } },
 });
 
-const note = sticky('## Idempotent paid embedding\nReserve before calling OpenAI. A completed attempt returns its persisted result; a duplicate worker stops while the original lease is active; every provider success or failure is traced before returning to the caller.', [reserve, existingResult, embed, persistTrace, returnCached, stopDuplicateWorker, returnFailure], { color: 4 });
+const note = sticky('## Idempotent paid embedding\nClaim exact candidate work and reserve before calling OpenAI. Mark possibly sent before the HTTP call; a duplicate worker stops while the original lease is active. Every provider success or failure is traced before returning to the caller.', [reserve, existingResult, markSending, embed, persistTrace, returnCached, stopDuplicateWorker, returnFailure], { color: 4 });
 
 export default workflow('qb3-embed-retrieve', 'Embed and retrieve neighbours')
-  .add(input)
-  .to(reserve)
+  .add(input.to(reserve)
   .to(existingResult
     .onTrue(returnCached.to(stopDuplicateWorker))
     .onFalse(reserved
-      .onTrue(embed.to(succeeded
+      .onTrue(markSending.to(embed).to(succeeded
         .onTrue(reconcile.to(storeAndFind).to(persistTrace).to(traceSucceeded
           .onTrue(returnStored)
           .onFalse(returnFailure)))
@@ -209,5 +219,5 @@ export default workflow('qb3-embed-retrieve', 'Embed and retrieve neighbours')
           .onFalse(unknown.to(persistTrace).to(traceSucceeded
             .onTrue(returnStored)
             .onFalse(returnFailure))))))
-      .onFalse(returnUnavailable)))
+      .onFalse(returnUnavailable))))
   .add(note);

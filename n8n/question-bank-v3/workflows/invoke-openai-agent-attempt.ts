@@ -13,6 +13,7 @@ const input = trigger({
     { name: 'reservation_usd', type: 'number' },
     { name: 'input_cost_per_million_usd', type: 'number' }, { name: 'output_cost_per_million_usd', type: 'number' },
     { name: 'repair_of_invocation_id', type: 'string' },
+    { name: 'work_group_id', type: 'string' },
   ] } } },
 });
 
@@ -26,6 +27,7 @@ const reserve = node({
       parent_attempt_id: expr("{{ $('Agent input').item.json.parent_attempt_id || '' }}"), agent_role: expr("{{ $('Agent input').item.json.agent_role }}"),
       provider: 'openai', requested_model: expr("{{ $('Agent input').item.json.model_id }}"),
       reasoning_setting: expr("{{ $('Agent input').item.json.reasoning_setting }}"), reservation_usd: expr("{{ $('Agent input').item.json.reservation_usd }}"),
+      work_group_id: expr("{{ $('Agent input').item.json.work_group_id || '' }}"),
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -37,6 +39,7 @@ const reserve = node({
       { id: 'requested_model', displayName: 'requested_model', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
 });
@@ -72,6 +75,15 @@ const stopDuplicateWorker = node({
       { leftValue: expr("{{ $('Return cached OpenAI attempt').item.json.status || '' }}"), rightValue: 'in_flight', operator: { type: 'string', operation: 'notEquals' } },
     ],
   } } },
+});
+
+const markSending = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Mark OpenAI request as possibly sent', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery',
+    query: 'select qb3.mark_provider_attempt_sending($1) as marked;',
+    options: { queryReplacement: expr("{{ [$('Agent input').item.json.attempt_id] }}") },
+  } },
 });
 
 const openai = node({
@@ -294,6 +306,7 @@ const retrySignal = node({
   config: { name: 'Return explicit retry signal', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
     { id: 'status', name: 'status', value: 'retryable_failure', type: 'string' },
     { id: 'attempt-id', name: 'attempt_id', value: expr("{{ $('Agent input').item.json.attempt_id }}"), type: 'string' },
+    { id: 'retry-after', name: 'retry_after_seconds', value: expr("{{ (() => { const response = $('OpenAI role agent — paid').item.json; const headers = response.headers || response.error?.headers || response.error?.response?.headers || {}; const raw = headers['retry-after'] || headers['Retry-After'] || headers.get?.('retry-after'); if (!raw) return 10; const seconds = Number(raw); const parsed = Number.isFinite(seconds) ? seconds : (Date.parse(String(raw)) - Date.now()) / 1000; return Number.isFinite(parsed) ? Math.max(1, Math.min(300, Math.ceil(parsed))) : 10; })() }}"), type: 'number' },
   ] } } },
 });
 
@@ -316,31 +329,30 @@ const persistProviderFailure = node({
   config: { name: 'Persist failed OpenAI invocation', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
     operation: 'executeQuery',
     query: 'select * from qb3.persist_agent_run($1,$2,$3,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9,$10,$11,$12::jsonb,$13,$14);',
-    options: { queryReplacement: expr("{{ [$('Agent input').item.json.invocation_id, $('Agent input').item.json.attempt_id, $('Agent input').item.json.campaign_id, $('Agent input').item.json.batch_id || null, $('Agent input').item.json.candidate_id || null, $('Agent input').item.json.mission_id || null, $('Agent input').item.json.agent_role, $('Agent input').item.json.prompt_key, $('Agent input').item.json.prompt_version, $('Agent input').item.json.rendered_prompt, JSON.stringify($('OpenAI role agent — paid').item.json), JSON.stringify({ error: $('OpenAI role agent — paid').item.json.error || $('OpenAI role agent — paid').item.json.message || 'provider_failure', transport_status: String($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || '') ? 'retryable_failure' : 'failed' }), 'failed', $('Agent input').item.json.repair_of_invocation_id || null] }}") },
+    options: { queryReplacement: expr("{{ [$('Agent input').item.json.invocation_id, $('Agent input').item.json.attempt_id, $('Agent input').item.json.campaign_id, $('Agent input').item.json.batch_id || null, $('Agent input').item.json.candidate_id || null, $('Agent input').item.json.mission_id || null, $('Agent input').item.json.agent_role, $('Agent input').item.json.prompt_key, $('Agent input').item.json.prompt_version, $('Agent input').item.json.rendered_prompt, JSON.stringify($('OpenAI role agent — paid').item.json), JSON.stringify({ error: $('OpenAI role agent — paid').item.json.error || $('OpenAI role agent — paid').item.json.message || 'provider_failure', transport_status: !Number($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || 0) ? 'unknown_spend' : [408, 409, 425, 429, 500, 502, 503, 504].includes(Number($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || 0)) ? 'retryable_failure' : 'configuration_failure' }), 'failed', $('Agent input').item.json.repair_of_invocation_id || null] }}") },
   } },
 });
 
 const failedWasDefinite = ifElse({ version: 2.3, config: { name: 'Failed invocation was definite?', parameters: {
   conditions: { options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
-    { leftValue: expr("{{ String($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || '') }}"), rightValue: '', operator: { type: 'string', operation: 'notEmpty', singleValue: true } },
+    { leftValue: expr("{{ [408, 409, 425, 429, 500, 502, 503, 504].includes(Number($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || 0)) }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ] },
 } } });
 
 const failedSignal = node({
   type: 'n8n-nodes-base.set', version: 3.5,
   config: { name: 'Return traced OpenAI failure', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
-    { id: 'status', name: 'status', value: 'failed', type: 'string' },
-    { id: 'reason', name: 'reason', value: 'openai_provider_failure', type: 'string' },
+    { id: 'status', name: 'status', value: 'configuration_failure', type: 'string' },
+    { id: 'reason', name: 'reason', value: expr("{{ 'openai_http_' + String($('OpenAI role agent — paid').item.json.statusCode || $('OpenAI role agent — paid').item.json.httpCode || 'other') }}"), type: 'string' },
     { id: 'attempt-id', name: 'attempt_id', value: expr("{{ $('Agent input').item.json.attempt_id }}"), type: 'string' },
   ] } } },
 });
 
 export default workflow('qb3-invoke-openai-attempt', 'Invoke OpenAI agent attempt')
-  .add(input)
-  .to(reserve)
+  .add(input.to(reserve)
   .to(existingReconciled
     .onTrue(returnCached.to(stopDuplicateWorker))
-    .onFalse(reserved.onTrue(openai.to(succeeded
+    .onFalse(reserved.onTrue(markSending.to(openai).to(succeeded
       .onTrue(reconcile.to(parseAndValidate).to(schemaValid
         .onTrue(persist)
         .onFalse(persistSchemaFailure.to(repairAllowed
@@ -350,4 +362,4 @@ export default workflow('qb3-invoke-openai-attempt', 'Invoke OpenAI agent attemp
         .onTrue(release.to(persistProviderFailure).to(failedWasDefinite
           .onTrue(retrySignal)
           .onFalse(failedSignal)))
-        .onFalse(unknown.to(persistProviderFailure)))))));
+        .onFalse(unknown.to(persistProviderFailure))))))));

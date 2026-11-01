@@ -32,7 +32,7 @@ const commonInputs = `
     { name: 'campaign_id', type: 'string' }, { name: 'batch_id', type: 'string' },
     { name: 'candidate_id', type: 'string' }, { name: 'mission_id', type: 'string' },
     { name: 'attempt_id', type: 'string' }, { name: 'invocation_id', type: 'string' },
-    { name: 'context', type: 'object' },`;
+    { name: 'context', type: 'object' }, { name: 'work_group_id', type: 'string' },`;
 
 const field = (id, type) => `{ id: '${id}', displayName: '${id}', type: '${type}', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }`;
 
@@ -59,12 +59,14 @@ function providerInputs(provider, role, promptKey, reasoning) {
       context: expr("{{ $('Agent input').item.json.context }}"),
       model_waterfall: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === '${runtimeKey}'); return typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; })() }}"),
       reasoning_setting: '${reasoning}',
-      reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === '${runtimeKey}').reservationUsd }}"),${repairValue}`;
+      reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === '${runtimeKey}').reservationUsd }}"),
+      work_group_id: expr("{{ $('Agent input').item.json.work_group_id || '' }}"),${repairValue}`;
   const fields = [
     ['campaign_id','string'], ['batch_id','string'], ['candidate_id','string'],
     ['mission_id','string'], ['base_attempt_id','string'], ['base_invocation_id','string'],
     ['agent_role','string'], ['prompt_key','string'], ['context','object'],
     ['model_waterfall','array'], ['reasoning_setting','string'], ['reservation_usd','number'],
+    ['work_group_id','string'],
     ...(role === 'structured_output_repair' ? [['repair_of_invocation_id','string']] : []),
   ].map(([id,type]) => field(id,type)).join(',\n      ');
   return `workflowInputs: { mappingMode: 'defineBelow', value: {${values}\n    }, matchingColumns: [], schema: [\n      ${fields}\n    ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true }`;
@@ -96,7 +98,7 @@ const invoke = node({
   } },
 });
 
-export default workflow('qb3-${slug}', '${name}').add(input).to(loadPrompt).to(invoke);
+export default workflow('qb3-${slug}', '${name}').add(input.to(loadPrompt).to(invoke));
 `;
 }
 

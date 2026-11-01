@@ -15,12 +15,21 @@ const persist = node({
       update qb3.campaigns set status = 'database_error', completed_at = now()
       where campaign_id = (select campaign_id from context) and status = 'running'
       returning campaign_id
+    ), released as (
+      delete from qb3.campaign_worker_leases
+      where campaign_id = (select campaign_id from context) and execution_id = $2
+      returning campaign_id
     )
     insert into qb3.workflow_errors (
       campaign_id, workflow_id, execution_id, node_name, sanitized_error
     ) values (
       (select campaign_id from context), $1, $2, $3,
-      jsonb_build_object('name', $4, 'message', $5, 'campaign_stopped', exists(select 1 from stopped))
+      jsonb_build_object(
+        'name', $4,
+        'message', $5,
+        'campaign_stopped', exists(select 1 from stopped),
+        'worker_released', exists(select 1 from released)
+      )
     ) returning workflow_error_id, campaign_id, created_at;`,
     options: { queryReplacement: expr("{{ [$('Question Bank workflow failed').item.json.workflow?.id || '', $('Question Bank workflow failed').item.json.execution?.id || '', $('Question Bank workflow failed').item.json.execution?.lastNodeExecuted || '', $('Question Bank workflow failed').item.json.execution?.error?.name || 'WorkflowError', $('Question Bank workflow failed').item.json.execution?.error?.message || 'Unknown workflow error'] }}") },
   } },

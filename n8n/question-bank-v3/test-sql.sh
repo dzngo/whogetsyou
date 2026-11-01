@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-container_name="question-bank-v3-sql-test"
+container_name="question-bank-v3-sql-test-$$"
 image="${QB3_TEST_POSTGRES_IMAGE:-ghcr.io/supabase/postgres:17.6.1.159}"
 
 cleanup() {
@@ -9,7 +9,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cleanup
 docker run --name "$container_name" \
   -e POSTGRES_PASSWORD=test-only-password \
   -d "$image" >/dev/null
@@ -71,4 +70,38 @@ docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
 
 docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
   -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/010_question_stage_progress.sql"
+
+# Applying the upgrade twice must be harmless: existing volumes can contain
+# an earlier partially completed local migration during development.
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/010_question_stage_progress.sql" >/dev/null
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/011_shallow_family_distribution.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/012_deterministic_shallow_gate.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/013_persist_route_candidate.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
   < "$(dirname "$0")/sql/900_test_question_bank_v3.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/910_test_recovery.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/920_test_deterministic_shallow_gate.sql"
+
+docker exec -i "$container_name" psql -v ON_ERROR_STOP=1 \
+  -U supabase_admin -d postgres \
+  < "$(dirname "$0")/sql/930_test_persist_route_candidate.sql"

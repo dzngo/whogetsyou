@@ -26,7 +26,7 @@ const selectRows = node({
       'accepted'::text as state, c.campaign_id,
       coalesce(string_agg(distinct qt.theme_code, ',' order by qt.theme_code), '') as themes,
       q.accepted_at as created_at
-    from qb3.questions q
+    from qb3.ready_questions q
     join qb3.candidates c using (candidate_id)
     left join qb3.question_themes qt using (question_id)
     where $1 = 'accepted'
@@ -36,7 +36,7 @@ const selectRows = node({
         where fqt.question_id = q.question_id and fqt.theme_code = $3
       ))
       and ($5 = '' or c.campaign_id = $5)
-    group by q.question_id, c.campaign_id
+    group by q.question_id, q.question_text, q.level, c.campaign_id, q.accepted_at
     union all
     select c.candidate_id::text, c.question_text, c.level, c.state,
       c.campaign_id, ''::text, c.created_at
@@ -46,7 +46,7 @@ const selectRows = node({
       and ($4 = '' or c.state = $4)
       and ($5 = '' or c.campaign_id = $5)
     order by created_at;`,
-    options: { queryReplacement: expr("{{ [$('Export filters').item.json.dataset, $('Export filters').item.json.level || 'all', $('Export filters').item.json.theme || '', $('Export filters').item.json.state || '', $('Export filters').item.json.campaign_id || ''] }}") },
+    options: { queryReplacement: expr("{{ [($('Export filters').item.json.dataset || $('Export filters').item.json['Dataset']), ($('Export filters').item.json.level || $('Export filters').item.json['Level'] || 'all'), ($('Export filters').item.json.theme || $('Export filters').item.json['Theme code (accepted only)'] || ''), ($('Export filters').item.json.state || $('Export filters').item.json['Candidate state'] || ''), ($('Export filters').item.json.campaign_id || $('Export filters').item.json['Campaign ID'] || '')] }}") },
   } },
 });
 
@@ -54,8 +54,8 @@ const csv = node({
   type: 'n8n-nodes-base.convertToFile', version: 1.1,
   config: { name: 'Create CSV', parameters: {
     operation: 'csv', binaryPropertyName: 'data',
-    options: { fileName: expr("{{ 'question-bank-v3-' + $('Export filters').item.json.dataset + '.csv' }}"), headerRow: true },
+    options: { fileName: expr("{{ 'question-bank-v3-' + ($('Export filters').item.json.dataset || $('Export filters').item.json['Dataset']) + '.csv' }}"), headerRow: true },
   } },
 });
 
-export default workflow('qb3-export-question-bank', 'Export Question Bank').add(form).to(selectRows).to(csv);
+export default workflow('qb3-export-question-bank', 'Export Question Bank').add(form.to(selectRows).to(csv));

@@ -2,43 +2,87 @@
   {
     "promptKey": "observe_diversity",
     "role": "observation",
-    "version": "v1",
+    "version": "v4",
     "providerFamily": "gemini",
     "reasoning": "high",
-    "template": "You are the Observation Agent for Question Bank v3. Analyze the supplied accepted-bank distribution snapshot and recent campaign evidence. Describe concentration, repetition risks, successful exploration, and genuinely underexplored directions. Treat statistics as evidence, never as quotas. Do not propose questions or missions. Do not infer semantic clusters. Use only the supplied data and return the required JSON schema. INPUT: <<OBSERVATION_INPUT_JSON>>",
-    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"observations\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"repetition_risks\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"successful_exploration\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"exploration_opportunities\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"avoid_patterns\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"observations\",\"repetition_risks\",\"successful_exploration\",\"exploration_opportunities\",\"avoid_patterns\"],\"additionalProperties\":false}",
+    "template": "You are the Observation Agent for Question Bank v3. From the supplied bank snapshot, return concise priorities for the Mission Writer and concise avoid rules. Focus on coverage, repeat risk, and shallow lightness. Treat statistics as evidence, not quotas. Never write questions, missions, or examples. Return only the required JSON schema. INPUT: <<OBSERVATION_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"priorities\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":4,\"items\":{\"type\":\"string\",\"maxLength\":160}},\"avoid_patterns\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":4,\"items\":{\"type\":\"string\",\"maxLength\":160}}},\"required\":[\"priorities\",\"avoid_patterns\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "No semantic clustering and no admission authority."
   },
   {
     "promptKey": "write_generation_missions",
     "role": "mission_writer",
-    "version": "v3",
+    "version": "v6",
     "providerFamily": "gemini",
     "reasoning": "high",
-    "template": "You are the Mission Writer Agent for Question Bank v3, a social question game about how well people know the Storyteller. Turn the supplied Observation report and requested level mix into exactly four distinct creative missions. Keep every mission within broadly relatable human life: personal preferences, habits, reactions, choices, memories, relationships, aspirations, personality, and ordinary situations. Exclude trivia, factual tests, professional role-play, and specialist technical or domain knowledge. Missions must open different territory across aspect, scenario, perspective, answer space, optional contrast, and question form. Each mission is a broad creative territory for five questions, not a single scenario to paraphrase five times; its directions must leave room for materially different angles, situations, perspectives, answer spaces, and forms inside that mission. Shallow missions must support light, low-pressure, immediately answerable questions. Deep missions must support safe questions whose answers reveal something characteristic about the Storyteller; depth does not mean complexity or expertise. Themes are optional non-binding hints, never quotas. Do not write questions, provide question examples, or copy prior missions. Keep each mission concise and independently usable. Return only the required JSON schema. INPUT: <<MISSION_INPUT_JSON>>",
-    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"missions\":{\"type\":\"array\",\"minItems\":4,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"mission_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4},\"level\":{\"type\":\"string\",\"enum\":[\"shallow\",\"deep\"]},\"brief\":{\"type\":\"string\"},\"aspect_direction\":{\"type\":[\"string\",\"null\"]},\"scenario_direction\":{\"type\":[\"string\",\"null\"]},\"perspective_direction\":{\"type\":[\"string\",\"null\"]},\"answer_space_direction\":{\"type\":[\"string\",\"null\"]},\"contrast_direction\":{\"type\":[\"string\",\"null\"]},\"question_form_direction\":{\"type\":[\"string\",\"null\"]},\"theme_hints\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"mission_slot\",\"level\",\"brief\",\"aspect_direction\",\"scenario_direction\",\"perspective_direction\",\"answer_space_direction\",\"contrast_direction\",\"question_form_direction\",\"theme_hints\"],\"additionalProperties\":false}}},\"required\":[\"missions\"],\"additionalProperties\":false}",
+    "template": "Plan exactly four broad missions for Question Bank v3. Each mission must contain exactly five distinct candidate routes. Use the supplied priorities and avoid rules. For shallow, choose an allowed shallow_family and a broad everyday brief of at most 12 words. Every route requires aspect, question_form, and answer_space. Use question_form only from direct, habit, reaction, hypothetical, or memory. Make every form-and-answer-space pair distinct and ensure no two routes have the same likely reveal. scenario, perspective, and contrast are optional and must be null unless they create material variety. Do not write questions or examples. Return only the required JSON schema. INPUT: <<MISSION_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"missions\":{\"type\":\"array\",\"minItems\":4,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"mission_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4},\"level\":{\"type\":\"string\",\"enum\":[\"shallow\",\"deep\"]},\"shallow_family\":{\"type\":[\"string\",\"null\"],\"enum\":[null,\"favorites_and_go_tos\",\"daily_routines\",\"personal_essentials\",\"food_and_everyday_consumption\",\"leisure_and_media\",\"everyday_choices_and_spending\",\"habits_and_quirks\",\"mood_and_comfort\",\"skills_and_curiosity\",\"social_style\",\"home_work_and_digital_life\",\"low_stakes_situations\"]},\"brief\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":90},\"routes\":{\"type\":\"array\",\"minItems\":5,\"maxItems\":5,\"items\":{\"type\":\"object\",\"properties\":{\"route_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5},\"aspect\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"question_form\":{\"type\":\"string\",\"enum\":[\"direct\",\"habit\",\"reaction\",\"hypothetical\",\"memory\"]},\"answer_space\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"scenario\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"perspective\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"contrast\":{\"type\":[\"string\",\"null\"],\"maxLength\":80}},\"required\":[\"route_slot\",\"aspect\",\"question_form\",\"answer_space\",\"scenario\",\"perspective\",\"contrast\"],\"additionalProperties\":false}}},\"required\":[\"mission_slot\",\"level\",\"shallow_family\",\"brief\",\"routes\"],\"additionalProperties\":false}}},\"required\":[\"missions\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "Exactly four broad dynamic territories; each supports five internally varied questions; no question examples."
   },
   {
     "promptKey": "generate_questions",
     "role": "creative",
-    "version": "v3",
+    "version": "v6",
     "providerFamily": "gemini",
     "reasoning": "high",
-    "template": "You are the Creative Agent for Question Bank v3, a social question game about how well people know the Storyteller. Generate exactly five original English questions for the supplied mission and level. Output only the questions, without explanations, rationales, labels, or metadata. Treat the mission as broad creative territory, not as one scenario to paraphrase repeatedly. Before returning, compare the five questions with one another and ensure each occupies a materially different question angle and answer space; across the set, vary scenario, perspective, contrast, and question form whenever the mission permits. Rewrite any sibling that would lead to substantially the same conversation or reveal as another. Questions must concern broadly relatable personal life, preferences, habits, reactions, choices, memories, relationships, aspirations, personality, or ordinary situations. Exclude trivia, factual tests, professional role-play, and specialist technical or domain knowledge. Do not imitate templates because no question examples are provided. Do not force a theme. Shallow questions must be lightweight, realistic, low-pressure, and immediately answerable; a simple preference or poll-style question is valid. Deep questions must safely invite a personally characteristic answer about the Storyteller; depth does not mean complexity or expertise. Every question must contain one clear answer task, be ordinarily answerable, boundedly open, realistic, structurally clean, and safe. Return only the required JSON schema. INPUT: <<CREATIVE_INPUT_JSON>>",
-    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"questions\":{\"type\":\"array\",\"minItems\":5,\"maxItems\":5,\"items\":{\"type\":\"string\",\"minLength\":3}}},\"required\":[\"questions\"],\"additionalProperties\":false}",
+    "template": "Write one question for a how-well-do-you-know-me game. Use I or my and follow the supplied mission and route. For shallow, write a plain question of at most 18 words about one everyday preference, habit, tendency, or low-stakes situation. Do not add a choice, count, ranking, or elaborate setup. For deep, write a safe question that reveals something characteristic about me. Return only the required JSON schema. INPUT: <<CREATIVE_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\",\"minLength\":3}},\"required\":[\"question\"],\"additionalProperties\":false}",
     "status": "active",
-    "notes": "Five questions per mission must be internally diverse; contains no example questions."
+    "notes": "One question per route; the route controls variety without examples."
+  },
+  {
+    "promptKey": "write_generation_missions_v7",
+    "role": "mission_writer",
+    "version": "v7",
+    "providerFamily": "gemini",
+    "reasoning": "high",
+    "template": "Plan exactly four broad missions for Question Bank v3. Use the supplied priorities and avoid rules. For shallow, choose an allowed shallow_family and a broad everyday brief of at most 12 words. For deep, shallow_family is null and brief is at most 16 words. Do not write questions, routes, examples, scenes, contrasts, numbers, thresholds, or answers. Return only the required JSON schema. INPUT: <<MISSION_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"missions\":{\"type\":\"array\",\"minItems\":4,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"mission_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4},\"level\":{\"type\":\"string\",\"enum\":[\"shallow\",\"deep\"]},\"shallow_family\":{\"type\":[\"string\",\"null\"],\"enum\":[null,\"favorites_and_go_tos\",\"daily_routines\",\"personal_essentials\",\"food_and_everyday_consumption\",\"leisure_and_media\",\"everyday_choices_and_spending\",\"habits_and_quirks\",\"mood_and_comfort\",\"skills_and_curiosity\",\"social_style\",\"home_work_and_digital_life\",\"low_stakes_situations\"]},\"brief\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":90}},\"required\":[\"mission_slot\",\"level\",\"shallow_family\",\"brief\"],\"additionalProperties\":false}}},\"required\":[\"missions\"],\"additionalProperties\":false}",
+    "status": "active",
+    "notes": "Four compact broad missions; route planning is a separate agent call."
+  },
+  {
+    "promptKey": "plan_mission_routes",
+    "role": "route_planner",
+    "version": "v1",
+    "providerFamily": "gemini",
+    "reasoning": "high",
+    "template": "Plan exactly five candidate routes for the supplied Question Bank mission. Every route requires aspect, question_form, and answer_space. question_form must be direct, habit, reaction, hypothetical, or memory. Every form-and-answer-space pair must be distinct, and no two routes may reveal the same likely answer. scenario, perspective, and contrast must be null unless they create material variety. Do not write questions or examples. Return only the required JSON schema. INPUT: <<ROUTE_PLANNER_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"routes\":{\"type\":\"array\",\"minItems\":5,\"maxItems\":5,\"items\":{\"type\":\"object\",\"properties\":{\"route_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5},\"aspect\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"question_form\":{\"type\":\"string\",\"enum\":[\"direct\",\"habit\",\"reaction\",\"hypothetical\",\"memory\"]},\"answer_space\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"scenario\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"perspective\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"contrast\":{\"type\":[\"string\",\"null\"],\"maxLength\":80}},\"required\":[\"route_slot\",\"aspect\",\"question_form\",\"answer_space\",\"scenario\",\"perspective\",\"contrast\"],\"additionalProperties\":false}}},\"required\":[\"routes\"],\"additionalProperties\":false}",
+    "status": "active",
+    "notes": "Five compact route controls for exactly one mission; no question examples."
+  },
+  {
+    "promptKey": "write_generation_missions_v8",
+    "role": "mission_writer",
+    "version": "v8",
+    "providerFamily": "gemini",
+    "reasoning": "high",
+    "template": "Plan exactly four broad missions for Question Bank v3. The requested_level_mix is a hard contract: use exactly that many missions of each level (every mission yields five questions). In a shallow-only batch, every mission must be shallow. Use the supplied priorities and avoid rules only within that contract. A shallow brief names one ordinary everyday topic, not a question form, scene, or combined theme; choose an allowed shallow_family and use at most 12 words. For deep, shallow_family is null and brief is at most 16 words. Do not write questions, routes, examples, scenes, contrasts, numbers, thresholds, or answers. Return only the required JSON schema. INPUT: <<MISSION_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"missions\":{\"type\":\"array\",\"minItems\":4,\"maxItems\":4,\"items\":{\"type\":\"object\",\"properties\":{\"mission_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4},\"level\":{\"type\":\"string\",\"enum\":[\"shallow\",\"deep\"]},\"shallow_family\":{\"type\":[\"string\",\"null\"],\"enum\":[null,\"favorites_and_go_tos\",\"daily_routines\",\"personal_essentials\",\"food_and_everyday_consumption\",\"leisure_and_media\",\"everyday_choices_and_spending\",\"habits_and_quirks\",\"mood_and_comfort\",\"skills_and_curiosity\",\"social_style\",\"home_work_and_digital_life\",\"low_stakes_situations\"]},\"brief\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":90}},\"required\":[\"mission_slot\",\"level\",\"shallow_family\",\"brief\"],\"additionalProperties\":false}}},\"required\":[\"missions\"],\"additionalProperties\":false}",
+    "status": "active",
+    "notes": "Four compact missions with the requested level mix as a hard constraint."
+  },
+  {
+    "promptKey": "plan_mission_routes_v2",
+    "role": "route_planner",
+    "version": "v2",
+    "providerFamily": "gemini",
+    "reasoning": "high",
+    "template": "Plan exactly five candidate routes for the supplied Question Bank mission. Every route requires aspect, question_form, and answer_space. question_form must be direct, habit, reaction, hypothetical, or memory. Every form-and-answer-space pair must be distinct, and no two routes may reveal the same likely answer. For a shallow mission, every route must lead to one plain, broadly relatable everyday fact, preference, habit, tendency, or plausible low-stakes reaction. Keep aspect and answer_space short and ordinary. scenario, perspective, and contrast must be null unless essential; never use an elaborate, exotic, family-role, emotionally heavy, or precise setup. Do not write questions or examples. Return only the required JSON schema. INPUT: <<ROUTE_PLANNER_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"routes\":{\"type\":\"array\",\"minItems\":5,\"maxItems\":5,\"items\":{\"type\":\"object\",\"properties\":{\"route_slot\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":5},\"aspect\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"question_form\":{\"type\":\"string\",\"enum\":[\"direct\",\"habit\",\"reaction\",\"hypothetical\",\"memory\"]},\"answer_space\":{\"type\":\"string\",\"minLength\":3,\"maxLength\":80},\"scenario\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"perspective\":{\"type\":[\"string\",\"null\"],\"maxLength\":80},\"contrast\":{\"type\":[\"string\",\"null\"],\"maxLength\":80}},\"required\":[\"route_slot\",\"aspect\",\"question_form\",\"answer_space\",\"scenario\",\"perspective\",\"contrast\"],\"additionalProperties\":false}}},\"required\":[\"routes\"],\"additionalProperties\":false}",
+    "status": "active",
+    "notes": "Route control that keeps shallow routes ordinary and compact; no question examples."
   },
   {
     "promptKey": "evaluate_quality",
     "role": "quality_judge",
-    "version": "v2",
+    "version": "v4",
     "providerFamily": "openai",
     "reasoning": "medium",
-    "template": "You are the Quality Judge for Question Bank v3, a social question game about how well people know the Storyteller. Evaluate every supplied candidate independently for understandable natural wording, one clear answer task, ordinary answerability, bounded openness, broad personal relevance, realism, safety, clean single-question structure, and the requested level. Reject trivia, factual tests, professional role-play, and specialist technical or domain-knowledge questions. Shallow must be lightweight, low-pressure, and immediately answerable. Deep must safely reveal something personally characteristic about the Storyteller; complexity or expertise alone is not depth. Return pass, reject, or uncertain for every candidate with stable reason codes and a concise evidence note. Do not compare candidates for semantic duplication and do not assign themes. Return only the required JSON schema. INPUT: <<QUALITY_INPUT_JSON>>",
+    "template": "Judge each candidate independently for a social how-well-do-you-know-me game. Pass only clear, plain, low-stakes questions with one answer task. For shallow, pass only natural everyday preferences, habits, tendencies, or simple situations. Reject awkward procedural or bodily micro-reactions, overly specific prompts, and level mismatches. Deterministic checks already handle length, numbers, forced alternatives, and second-person voice. Deep must safely reveal something characteristic. Do not judge duplication or themes. Return only the required JSON schema. INPUT: <<QUALITY_INPUT_JSON>>",
     "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"decisions\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"candidate_id\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"pass\",\"reject\",\"uncertain\"]},\"reason_codes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"feedback_note\":{\"type\":\"string\"}},\"required\":[\"candidate_id\",\"verdict\",\"reason_codes\",\"feedback_note\"],\"additionalProperties\":false}}},\"required\":[\"decisions\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "First pass; at most ten candidates; rejects specialist knowledge tests."
@@ -46,10 +90,10 @@
   {
     "promptKey": "escalate_quality",
     "role": "quality_escalation",
-    "version": "v1",
+    "version": "v3",
     "providerFamily": "openai",
     "reasoning": "high",
-    "template": "You are the Quality Escalation Agent for Question Bank v3. Re-evaluate only the supplied uncertain quality cases using the complete quality and level contract. Decide pass, reject, or uncertain independently for every candidate. Preserve uncertainty when evidence is genuinely insufficient. Do not judge semantic duplication or assign themes. Return only the required JSON schema. INPUT: <<QUALITY_ESCALATION_INPUT_JSON>>",
+    "template": "Re-evaluate only uncertain candidates using the same plain natural social-question standard. A shallow candidate must be a clear everyday question, not a procedural micro-reaction or elaborate situation. A deep candidate must safely reveal something characteristic. Preserve uncertainty only when evidence is genuinely insufficient. Do not judge duplication or themes. Return only the required JSON schema. INPUT: <<QUALITY_ESCALATION_INPUT_JSON>>",
     "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"decisions\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"candidate_id\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"pass\",\"reject\",\"uncertain\"]},\"reason_codes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"feedback_note\":{\"type\":\"string\"}},\"required\":[\"candidate_id\",\"verdict\",\"reason_codes\",\"feedback_note\"],\"additionalProperties\":false}}},\"required\":[\"decisions\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "Only uncertain first-pass cases."
@@ -57,10 +101,10 @@
   {
     "promptKey": "judge_semantic_duplication",
     "role": "semantic_judge",
-    "version": "v2",
+    "version": "v3",
     "providerFamily": "openai",
     "reasoning": "high",
-    "template": "You are the Semantic Judge for Question Bank v3. Variety is the primary admission goal. For each candidate, compare it only with its supplied nearest accepted questions and decide duplicate, distinct, or uncertain. Mark duplicate when an accepted question would make the candidate feel like another variation of the same conversational prompt: the same or closely related situation viewed from the same perspective or question angle, even if the requested detail or answer space differs. Also mark duplicate when the question angle and likely answer space substantially overlap in a related situation. A marginal distinction is not enough when both questions would elicit substantially the same story, preference, behavior, trait, or reveal. Sharing only a named theme, a genuinely broad aspect, or superficial wording remains insufficient. Mark distinct only when the candidate opens materially different conversational territory through its scenario, perspective or angle, and likely reveal. Prefer preserving bank-level variety over admitting near-siblings. Return one independent decision per candidate, matched accepted-question IDs, explicit dimension relations, stable reason codes, and a concise feedback note. Retrieval scores are evidence for selection, never verdicts. Return only the required JSON schema. INPUT: <<SEMANTIC_INPUT_JSON>>",
+    "template": "Compare each candidate only with its nearest accepted questions. Reject a duplicate when it has the same conversation territory, angle, or likely reveal. Mark distinct only for material new territory. Retrieval scores select neighbours; they are not a verdict. Return matched IDs, relations, reason codes, and a concise note. Return only the required JSON schema. INPUT: <<SEMANTIC_INPUT_JSON>>",
     "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"decisions\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"candidate_id\":{\"type\":\"string\"},\"verdict\":{\"type\":\"string\",\"enum\":[\"duplicate\",\"distinct\",\"uncertain\"]},\"matched_question_ids\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"relations\":{\"type\":\"object\",\"properties\":{\"scenario\":{\"type\":\"string\",\"enum\":[\"same\",\"related\",\"different\",\"uncertain\"]},\"perspective\":{\"type\":\"string\",\"enum\":[\"same\",\"related\",\"different\",\"uncertain\"]},\"answer_space\":{\"type\":\"string\",\"enum\":[\"same\",\"overlapping\",\"different\",\"uncertain\"]}},\"required\":[\"scenario\",\"perspective\",\"answer_space\"],\"additionalProperties\":false},\"reason_codes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"feedback_note\":{\"type\":\"string\"}},\"required\":[\"candidate_id\",\"verdict\",\"matched_question_ids\",\"relations\",\"reason_codes\",\"feedback_note\"],\"additionalProperties\":false}}},\"required\":[\"decisions\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "One candidate with up to ten fresh neighbours; variety-first near-sibling rejection."
@@ -68,11 +112,11 @@
   {
     "promptKey": "assign_themes_metadata",
     "role": "theme_metadata",
-    "version": "v1",
+    "version": "v3",
     "providerFamily": "openai",
     "reasoning": "medium",
-    "template": "You are the Theme and Metadata Agent for Question Bank v3. Classify each already-admitted question. Assign zero, one, or multiple equal memberships from the supplied named themes; never force a membership and never assign Random. Also identify question form, whether a concrete scenario or contrast is present, and concise free-text aspect, scenario, perspective, answer-space, and contrast descriptions. Metadata cannot reverse admission. Return only the required JSON schema. INPUT: <<METADATA_INPUT_JSON>>",
-    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"items\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"candidate_id\":{\"type\":\"string\"},\"themes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"question_form\":{\"type\":\"string\",\"enum\":[\"direct\",\"hypothetical\",\"memory\",\"reaction\",\"choice\",\"comparison\"]},\"scenario_present\":{\"type\":\"boolean\"},\"contrast_present\":{\"type\":\"boolean\"},\"aspect\":{\"type\":[\"string\",\"null\"]},\"scenario\":{\"type\":[\"string\",\"null\"]},\"perspective\":{\"type\":[\"string\",\"null\"]},\"answer_space\":{\"type\":[\"string\",\"null\"]},\"contrast\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"candidate_id\",\"themes\",\"question_form\",\"scenario_present\",\"contrast_present\",\"aspect\",\"scenario\",\"perspective\",\"answer_space\",\"contrast\"],\"additionalProperties\":false}}},\"required\":[\"items\"],\"additionalProperties\":false}",
+    "template": "Classify each already-admitted question. Assign zero, one, or multiple supplied named themes; never force one or assign Random. Identify question form, scenario and contrast presence, concise aspect, scenario, perspective, answer-space, contrast, and shallow_family. Metadata cannot reverse admission. Return only the required JSON schema. INPUT: <<METADATA_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"items\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"candidate_id\":{\"type\":\"string\"},\"themes\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"question_form\":{\"type\":\"string\",\"enum\":[\"direct\",\"hypothetical\",\"memory\",\"reaction\",\"choice\",\"comparison\"]},\"scenario_present\":{\"type\":\"boolean\"},\"contrast_present\":{\"type\":\"boolean\"},\"shallow_family\":{\"type\":[\"string\",\"null\"],\"enum\":[null,\"favorites_and_go_tos\",\"daily_routines\",\"personal_essentials\",\"food_and_everyday_consumption\",\"leisure_and_media\",\"everyday_choices_and_spending\",\"habits_and_quirks\",\"mood_and_comfort\",\"skills_and_curiosity\",\"social_style\",\"home_work_and_digital_life\",\"low_stakes_situations\"]},\"aspect\":{\"type\":[\"string\",\"null\"]},\"scenario\":{\"type\":[\"string\",\"null\"]},\"perspective\":{\"type\":[\"string\",\"null\"]},\"answer_space\":{\"type\":[\"string\",\"null\"]},\"contrast\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"candidate_id\",\"themes\",\"question_form\",\"scenario_present\",\"contrast_present\",\"shallow_family\",\"aspect\",\"scenario\",\"perspective\",\"answer_space\",\"contrast\"],\"additionalProperties\":false}}},\"required\":[\"items\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "Runs only after admission."
   },
@@ -82,8 +126,8 @@
     "version": "v1",
     "providerFamily": "dynamic",
     "reasoning": "low",
-    "template": "You are the Structured Output Repair Agent for Question Bank v3. Convert the supplied malformed model response into data that satisfies the supplied JSON Schema. Preserve the original meaning and identifiers. Do not add substantive judgments or creative content. If repair is impossible, return repairable false and a concise error. Return only the required JSON schema. INPUT: <<REPAIR_INPUT_JSON>>",
-    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"repairable\":{\"type\":\"boolean\"},\"repaired_output\":{\"type\":[\"object\",\"null\"]},\"error\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"repairable\",\"repaired_output\",\"error\"],\"additionalProperties\":false}",
+    "template": "You are the Structured Output Repair Agent for Question Bank v3. Convert the supplied malformed model response into data that satisfies the supplied JSON Schema. Preserve the original meaning and identifiers. Do not add substantive judgments or creative content. If repair is impossible, return repairable false and a concise error. If repairable is true, put the complete repaired JSON value in repaired_output_json as a compact JSON string. Return only the required JSON schema. INPUT: <<REPAIR_INPUT_JSON>>",
+    "outputSchema_object": "{\"type\":\"object\",\"properties\":{\"repairable\":{\"type\":\"boolean\"},\"repaired_output_json\":{\"type\":[\"string\",\"null\"]},\"error\":{\"type\":[\"string\",\"null\"]}},\"required\":[\"repairable\",\"repaired_output_json\",\"error\"],\"additionalProperties\":false}",
     "status": "active",
     "notes": "Explicit paid repair; never hidden auto-fix."
   }

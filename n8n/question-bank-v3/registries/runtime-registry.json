@@ -39,6 +39,19 @@
     "notes": "Exactly five question strings; no example questions in prompt"
   },
   {
+    "runtimeKey": "route_planner",
+    "role": "route_planner",
+    "providerFamily": "gemini",
+    "modelWaterfall_object": "[{\"modelId\":\"gemini-3.5-flash-lite\",\"inputCostPerMillionUsd\":0.3,\"outputCostPerMillionUsd\":2.5,\"reasoning\":\"high_dynamic\"},{\"modelId\":\"gemini-3-flash-preview\",\"inputCostPerMillionUsd\":0.5,\"outputCostPerMillionUsd\":3,\"reasoning\":\"high_dynamic\"},{\"modelId\":\"gemini-3.6-flash\",\"inputCostPerMillionUsd\":0.75,\"outputCostPerMillionUsd\":3.75,\"reasoning\":\"high_dynamic\",\"priceValidThrough\":\"2026-12-31\"},{\"modelId\":\"gemini-3.5-flash-lite\",\"inputCostPerMillionUsd\":0.3,\"outputCostPerMillionUsd\":2.5,\"reasoning\":\"high_dynamic\",\"finalPrimaryRetry\":true}]",
+    "reasoning": "high",
+    "maxInputTokens": 8000,
+    "maxOutputTokens": 4096,
+    "reservationUsd": 0.028,
+    "status": "active",
+    "pricingSource": "https://ai.google.dev/gemini-api/docs/pricing",
+    "notes": "One mission, exactly five routes"
+  },
+  {
     "runtimeKey": "quality_judge",
     "role": "quality_judge",
     "providerFamily": "openai",

@@ -36,11 +36,78 @@ Run Question Bank campaign (authenticated form)
           -> Complete batch + refresh global statistics
 ```
 
+## Shallow-question contract
+
+“Shallow” means light and easy to answer, not vague or generic. Every future
+shallow candidate must ask one concise everyday fact, preference, habit,
+tendency, or plausible low-stakes situation—normally answerable in one short
+sentence. Rankings, scales, forced alternatives, option menus, elaborate
+setups, multiple answer tasks, heavy framing, and precision-recall burdens are
+rejected by the Quality Judge.
+
+The Mission Writer intentionally spreads shallow work across twelve light
+families: `favorites_and_go_tos`, `daily_routines`, `personal_essentials`,
+`food_and_everyday_consumption`, `leisure_and_media`,
+`everyday_choices_and_spending`, `habits_and_quirks`, `mood_and_comfort`,
+`skills_and_curiosity`, `social_style`, `home_work_and_digital_life`, and
+`low_stakes_situations`. A family guides generation; it is not a replacement
+for themes. Metadata records the family only after admission, and the global
+distribution snapshot reports its counts. Earlier rows remain
+`unclassified` rather than receiving guessed labels.
+
+After each compact mission is written, a separate Route Planner writes its five
+candidate routes. A route has a required
+`aspect`, `question_form`, and `answer_space`, with optional `scenario`,
+`perspective`, and `contrast` only when they create meaningful variety. Creative
+writes one question per route, so a broad family never becomes five near-copies.
+The route fields belong to generation control; they are not theme labels.
+
+The recovery upgrade adds durable processing stages before new generation. A
+question is **Ready** only after admission and complete metadata;
+accepted-but-unready questions remain searchable for duplicate detection but
+are excluded from export and ready-target statistics. Each question-stage
+(`quality`, `quality_escalation`, `embedding`, `semantic`, or `metadata`) has
+its own claim, lease, attempt count, retry deadline, and exact provider-attempt
+membership. A failed quality judgment never changes its admission decision, and
+a successful uncertain judgment gets a separate escalation allowance.
+
+Resume uses the same campaign and follows this order: reconcile expired paid
+attempts; finish accepted questions missing metadata; revisit due quality,
+embedding, and semantic stages in existing batches; then create a replacement
+batch only if the Ready target still needs it. Known unsent reservations are
+released; possibly sent calls become **Unknown Spend** and still count against
+the campaign cap. Confirmed 429/503 failures use a tracked retry with a new
+attempt ID (and honor `Retry-After` when present); configuration failures pause
+the campaign. Six recent OpenAI 503s pause it as `provider_outage` instead of
+spending through a service outage.
+
+See [`RECOVERY_PLAN.md`](./RECOVERY_PLAN.md) for the recovery contract and
+verification gates. Migration `010` and the corresponding recovery workflows
+are deployed, validated, read back, and published.
+
 `n8n-resources.json` is the authoritative map from these names to the live n8n
 draft IDs. Open **Process one Question Bank batch** for the complete agent and
 prompt flow. Open an individual execution, then enter a named Agent subworkflow
 to inspect its typed input, fully rendered credential-free prompt, raw provider
 response, structured response, model, usage, and reconciled cost.
+
+## Operator recovery
+
+Use **Control Question Bank campaign** with `status` before taking any recovery
+action. The Control and Export forms accept both internal field names and the
+visible labels emitted by older n8n Form Trigger versions. A failed status check
+does not itself change campaign state.
+
+In the recovery upgrade, `resume` keeps the same campaign ID and reuses its
+remaining authorized budget; adding budget is optional. It first settles
+expired attempts: a request known to be unsent releases its reservation, while
+a possibly sent request remains **Unknown Spend** and counts against the cap.
+It rejects a completed ready target, a safety ceiling, or a live provider
+reservation. Do not use
+n8n's **Retry** on a failed paid workflow execution: a provider call may have
+completed without its result being recorded. Inspect the failed execution and
+provider-attempt ledger first. Accepted questions remain in the bank if a new
+campaign is needed for the remaining target.
 
 Git snapshots of the two operator-edited tables live in
 `registries/prompt-registry.json` and `registries/runtime-registry.json`. They
@@ -55,15 +122,15 @@ docker compose up -d
 ```
 
 The first startup applies the numbered SQL migrations in `sql/` and enables pgvector.
-`001_question_bank_v3.sql` is the fresh-install snapshot; later numbered files
-are the idempotent upgrade path for existing volumes, so evolved function
-definitions intentionally appear in both places. Migration `009` blocks
+`001_question_bank_v3.sql` establishes the base schema; later numbered files
+are the idempotent upgrade path for existing volumes and fresh installs. Migration `009` blocks
 ambiguous provider replay, enforces even mixed targets, persists mission IDs
 before Creative calls, and makes grouped metadata application exact and atomic.
 PostgreSQL only runs `/docker-entrypoint-initdb.d` for an empty data directory,
 so upgrade an existing named volume explicitly:
 
 ```bash
+./scripts/apply-sql-migrations.sh --dry-run
 ./scripts/apply-sql-migrations.sh
 ```
 
@@ -71,6 +138,9 @@ The runner records successfully applied files in `qb3.schema_migrations` and
 does not replay them on later runs. It discovers `POSTGRES_USER` and
 `POSTGRES_DB` from the running container; set `QB3_POSTGRES_USER` or
 `QB3_POSTGRES_DB` only when intentionally overriding those values.
+Migration `010_question_stage_progress.sql` is idempotent and upgrades existing
+databases. A new Docker volume applies all numbered migrations in order, so its
+final schema matches an upgraded volume.
 The default host port is `55432`. In n8n, create a credential of type
 **Postgres** pointing to this database from the network where n8n runs. Do not
 put the password in a workflow field.
@@ -80,6 +150,16 @@ To test the schema in a disposable container:
 ```bash
 ./test-sql.sh
 ```
+
+Before a recovery rollout, capture the live state without changing it:
+
+```bash
+./scripts/preflight-recovery-deployment.sh qb3-2871
+```
+
+It reports whether migration `010` is already recorded, whether stage-work
+records exist, the campaign budget ledger, unfinished accepted questions, and
+any live provider reservations. It never resumes a campaign or calls a model.
 
 If n8n itself runs in Docker Desktop, use `host.docker.internal` and port
 `55432` in the Postgres credential. `localhost` from inside the n8n container
@@ -224,3 +304,8 @@ each candidate ID in the current group exactly once; otherwise the whole group
 is isolated as operationally unresolved. The asynchronous campaign worker
 registers its execution ID, allowing the shared error handler to persist the
 campaign ID and transition an escaped failure to `database_error`.
+
+The recovery worker renews its two-hour lease between long stages. Its
+ten-minute scheduler only restarts the same campaign when there is no live
+worker or provider reservation, some recoverable work is due, and the existing
+authorization still covers it. It neither starts a new campaign nor adds budget.

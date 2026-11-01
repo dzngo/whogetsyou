@@ -175,6 +175,7 @@ cython_debug/
 .pypirc
 
 *.csv
+!storage/curated_question_bank/questions.csv
 evals/results/*.jsonl
 cache/
 .adk/

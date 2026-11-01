@@ -19,6 +19,7 @@ const input = trigger({
           { name: 'requested_model', type: 'string' },
           { name: 'reasoning_setting', type: 'string' },
           { name: 'reservation_usd', type: 'number' },
+          { name: 'work_group_id', type: 'string' },
         ],
       },
     },
@@ -44,9 +45,9 @@ const reserve = node({
     name: 'Reserve in PostgreSQL',
     parameters: {
       operation: 'executeQuery',
-      query: "select * from qb3.reserve_provider_budget($1, $2, nullif($3, '')::uuid, nullif($4, '')::uuid, nullif($5, ''), $6, $7, $8, $9, $10::numeric);",
+      query: "select * from qb3.reserve_provider_budget_dispatch($1, $2, nullif($3, '')::uuid, nullif($4, '')::uuid, nullif($5, ''), $6, $7, $8, $9, $10::numeric, nullif($11, ''));",
       options: {
-        queryReplacement: expr("{{ [$('Input').item.json.attempt_id, $('Input').item.json.campaign_id, $('Input').item.json.batch_id || '', $('Input').item.json.candidate_id || '', $('Input').item.json.parent_attempt_id || '', $('Input').item.json.agent_role, $('Input').item.json.provider, $('Input').item.json.requested_model, $('Input').item.json.reasoning_setting, $('Input').item.json.reservation_usd] }}"),
+        queryReplacement: expr("{{ [$('Input').item.json.attempt_id, $('Input').item.json.campaign_id, $('Input').item.json.batch_id || '', $('Input').item.json.candidate_id || '', $('Input').item.json.parent_attempt_id || '', $('Input').item.json.agent_role, $('Input').item.json.provider, $('Input').item.json.requested_model, $('Input').item.json.reasoning_setting, $('Input').item.json.reservation_usd, $('Input').item.json.work_group_id || ''] }}"),
         largeNumbersOutput: 'text',
       },
     },
@@ -84,6 +85,4 @@ const result = node({
 });
 
 export default workflow('qb3-reserve-provider-budget', 'Reserve provider budget')
-  .add(input)
-  .to(reserve)
-  .to(result);
+  .add(input.to(reserve).to(result));

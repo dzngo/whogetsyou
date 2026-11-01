@@ -1,5 +1,16 @@
 import { workflow, node, trigger, expr, switchCase, ifElse } from '@n8n/workflow-sdk';
 
+const repairEnvelopeSchema = {
+  type: 'object',
+  properties: {
+    repairable: { type: 'boolean' },
+    repaired_output_json: { type: ['string', 'null'] },
+    error: { type: ['string', 'null'] },
+  },
+  required: ['repairable', 'repaired_output_json', 'error'],
+  additionalProperties: false,
+};
+
 const input = trigger({
   type: 'n8n-nodes-base.executeWorkflowTrigger', version: 1.2,
   config: { name: 'Agent input', parameters: { inputSource: 'workflowInputs', workflowInputs: { values: [
@@ -44,8 +55,9 @@ const gemini = node({
       agent_role: 'structured_output_repair', prompt_key: 'repair_structured_output',
       prompt_version: expr("{{ $('Load frozen prompt').item.json.prompt.version }}"),
       rendered_prompt: expr("{{ $('Load frozen prompt').item.json.prompt.template + '\\n\\nCONTEXT:\\n' + JSON.stringify($('Agent input').item.json.context) }}"),
-      output_schema: expr("{{ typeof $('Load frozen prompt').item.json.prompt.outputSchema_object === 'string' ? JSON.parse($('Load frozen prompt').item.json.prompt.outputSchema_object) : $('Load frozen prompt').item.json.prompt.outputSchema_object }}"),
+      output_schema: repairEnvelopeSchema,
       model_id: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].modelId; })() }}"),
+      reasoning_setting: 'low',
       reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini').reservationUsd }}"),
       input_cost_per_million_usd: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].inputCostPerMillionUsd; })() }}"),
       output_cost_per_million_usd: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_gemini'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].outputCostPerMillionUsd; })() }}"),
@@ -64,6 +76,7 @@ const gemini = node({
       { id: 'rendered_prompt', displayName: 'rendered_prompt', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'output_schema', displayName: 'output_schema', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'model_id', displayName: 'model_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'input_cost_per_million_usd', displayName: 'input_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -85,8 +98,9 @@ const openai = node({
       agent_role: 'structured_output_repair', prompt_key: 'repair_structured_output',
       prompt_version: expr("{{ $('Load frozen prompt').item.json.prompt.version }}"),
       rendered_prompt: expr("{{ $('Load frozen prompt').item.json.prompt.template + '\\n\\nCONTEXT:\\n' + JSON.stringify($('Agent input').item.json.context) }}"),
-      output_schema: expr("{{ typeof $('Load frozen prompt').item.json.prompt.outputSchema_object === 'string' ? JSON.parse($('Load frozen prompt').item.json.prompt.outputSchema_object) : $('Load frozen prompt').item.json.prompt.outputSchema_object }}"),
+      output_schema: repairEnvelopeSchema,
       model_id: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].modelId; })() }}"),
+      reasoning_setting: 'low',
       reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai').reservationUsd }}"),
       input_cost_per_million_usd: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].inputCostPerMillionUsd; })() }}"),
       output_cost_per_million_usd: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'structured_output_repair_openai'); const w = typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; return w[0].outputCostPerMillionUsd; })() }}"),
@@ -105,6 +119,7 @@ const openai = node({
       { id: 'rendered_prompt', displayName: 'rendered_prompt', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'output_schema', displayName: 'output_schema', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'model_id', displayName: 'model_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'input_cost_per_million_usd', displayName: 'input_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'output_cost_per_million_usd', displayName: 'output_cost_per_million_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -118,7 +133,14 @@ const validateOriginalSchema = node({
   config: { name: 'Validate repaired original contract', parameters: { mode: 'manual', includeOtherFields: false, assignments: { assignments: [
     { id: 'validation-result', name: 'validation_result', type: 'object', value: expr(`{{ (() => {
       const response = $json;
-      const repaired = response.structured_response?.repaired_output;
+      const envelope = response.structured_response || {};
+      let repaired;
+      try {
+        repaired = typeof envelope.repaired_output_json === 'string'
+          ? JSON.parse(envelope.repaired_output_json) : undefined;
+      } catch (_) {
+        repaired = undefined;
+      }
       const schema = $('Agent input').item.json.context?.required_output_schema || {};
       const valid = (candidate, rule) => {
         if (!rule || typeof rule !== 'object') return true;
@@ -153,8 +175,8 @@ const validateOriginalSchema = node({
         repaired_output: ok ? repaired : {},
         invocation_id: response.invocation_id || '',
         raw_response: response.raw_response || JSON.stringify(response),
-        repair_envelope: response.structured_response || {},
-        reason: ok ? '' : (response.structured_response?.error || response.reason || 'structured_output_repair_schema_mismatch'),
+        repair_envelope: ok ? { ...envelope, repaired_output: repaired } : envelope,
+        reason: ok ? '' : (envelope.error || response.reason || 'structured_output_repair_schema_mismatch'),
       };
     })() }}`) },
   ] } } },

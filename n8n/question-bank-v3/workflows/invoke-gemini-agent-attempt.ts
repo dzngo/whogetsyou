@@ -25,6 +25,7 @@ const reserve = node({
       parent_attempt_id: expr("{{ $('Agent input').item.json.parent_attempt_id || '' }}"), agent_role: expr("{{ $('Agent input').item.json.agent_role }}"),
       provider: 'gemini', requested_model: expr("{{ $('Agent input').item.json.model_id }}"), reasoning_setting: 'high_dynamic',
       reservation_usd: expr("{{ $('Agent input').item.json.reservation_usd }}"),
+      work_group_id: '',
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -36,6 +37,7 @@ const reserve = node({
       { id: 'requested_model', displayName: 'requested_model', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
 });
@@ -335,8 +337,7 @@ const failedSignal = node({
 });
 
 export default workflow('qb3-invoke-gemini-attempt', 'Invoke Gemini agent attempt')
-  .add(input)
-  .to(reserve)
+  .add(input.to(reserve)
   .to(existingReconciled
     .onTrue(returnCached.to(stopDuplicateWorker))
     .onFalse(reserved.onTrue(gemini.to(succeeded
@@ -349,4 +350,4 @@ export default workflow('qb3-invoke-gemini-attempt', 'Invoke Gemini agent attemp
         .onTrue(release503.to(persistProviderFailure).to(failedWas503
           .onTrue(retrySignal)
           .onFalse(failedSignal)))
-        .onFalse(unknown.to(persistProviderFailure)))))));
+        .onFalse(unknown.to(persistProviderFailure))))))));

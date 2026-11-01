@@ -9,9 +9,13 @@ const input = trigger({
 
 const read = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Read newly accepted questions and themes', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: 'select * from qb3.get_metadata_group($1::uuid);',
-    options: { queryReplacement: expr("{{ [$('Metadata stage input').item.json.batch_id] }}") },
+  config: { name: 'Claim unfinished accepted questions', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: `with claimed as materialized (
+      select * from qb3.claim_metadata_group($1, nullif($2, '')::uuid, 20)
+    ) select * from claimed union all
+      select null::text, null::uuid, '[]'::jsonb, '[]'::jsonb
+      where not exists (select 1 from claimed);`,
+    options: { queryReplacement: expr("{{ [$('Metadata stage input').item.json.campaign_id, $('Metadata stage input').item.json.batch_id || ''] }}") },
   } },
 });
 
@@ -26,15 +30,17 @@ const metadata = node({
   config: { name: '7. Theme and Metadata Agent', parameters: {
     mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: 'RvIfZ87f3V1g5Hu2' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
-      campaign_id: expr("{{ $('Metadata stage input').item.json.campaign_id }}"), batch_id: expr("{{ $('Metadata stage input').item.json.batch_id }}"),
+      campaign_id: expr("{{ $('Metadata stage input').item.json.campaign_id }}"), batch_id: expr('{{ $json.batch_id }}'),
       candidate_id: '', mission_id: '',
-      attempt_id: expr("{{ $('Metadata stage input').item.json.batch_id + '-metadata' }}"),
-      invocation_id: expr("{{ $('Metadata stage input').item.json.batch_id + '-metadata' }}"),
+      attempt_id: expr("{{ 'metadata-' + $json.work_group_id }}"),
+      invocation_id: expr("{{ 'metadata-' + $json.work_group_id }}"),
+      work_group_id: expr('{{ $json.work_group_id }}'),
       context: expr('{{ { questions: $json.questions, named_themes: $json.themes } }}'),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string' }, { id: 'batch_id', displayName: 'batch_id', type: 'string' },
       { id: 'candidate_id', displayName: 'candidate_id', type: 'string' }, { id: 'mission_id', displayName: 'mission_id', type: 'string' },
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string' }, { id: 'invocation_id', displayName: 'invocation_id', type: 'string' },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string' },
       { id: 'context', displayName: 'context', type: 'object' },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
@@ -43,15 +49,29 @@ const metadata = node({
 const metadataOk = ifElse({ version: 2.3, config: { name: 'Metadata output usable?', parameters: { conditions: {
   options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
     { leftValue: expr("{{ $json.status || '' }}"), rightValue: 'succeeded', operator: { type: 'string', operation: 'equals' } },
-    { leftValue: expr("{{ (() => { const expected = ($('Read newly accepted questions and themes').item.json.questions || []).map(q => String(q.candidate_id)).sort(); const actual = ($json.structured_response?.items || []).map(i => String(i.candidate_id)).sort(); return actual.length === new Set(actual).size && expected.length === actual.length && expected.every((id, index) => id === actual[index]); })() }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
+    { leftValue: expr("{{ Array.isArray($json.structured_response?.items) }}"), rightValue: true, operator: { type: 'boolean', operation: 'true', singleValue: true } },
   ],
 } } } });
 
 const apply = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
-  config: { name: 'Apply themes and metadata', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: 'select * from qb3.apply_metadata_results($1::uuid, $2::jsonb);',
-    options: { queryReplacement: expr("{{ [$('Metadata stage input').item.json.batch_id, JSON.stringify($('7. Theme and Metadata Agent').item.json.structured_response.items)] }}") },
+  config: { name: 'Apply valid metadata items individually', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: 'select * from qb3.apply_metadata_group_partial($1, $2::jsonb);',
+    options: { queryReplacement: expr("{{ [$('Claim unfinished accepted questions').item.json.work_group_id, JSON.stringify($('7. Theme and Metadata Agent').item.json.structured_response.items)] }}") },
+  } },
+});
+
+const allApplied = ifElse({ version: 2.3, config: { name: 'All claimed questions ready?', parameters: { conditions: {
+  options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' }, combinator: 'and', conditions: [
+    { leftValue: expr('{{ ($json.pending_ids || []).length }}'), rightValue: 0, operator: { type: 'number', operation: 'equals' } },
+  ],
+} } } });
+
+const markFailure = node({
+  type: 'n8n-nodes-base.postgres', version: 2.7,
+  config: { name: 'Record unfinished metadata group', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
+    operation: 'executeQuery', query: 'select * from qb3.finish_metadata_group_failure($1, $2, $3::boolean);',
+    options: { queryReplacement: expr("{{ [$('Claim unfinished accepted questions').item.json.work_group_id, $('7. Theme and Metadata Agent').item.json.structured_response?.transport_status || $('7. Theme and Metadata Agent').item.json.reason || $('7. Theme and Metadata Agent').item.json.status || 'metadata_output_unavailable', ['retryable_failure', 'unknown_spend'].includes($('7. Theme and Metadata Agent').item.json.structured_response?.transport_status || $('7. Theme and Metadata Agent').item.json.status) || $('7. Theme and Metadata Agent').item.json.reason === 'openai_retry_exhausted'] }}") },
   } },
 });
 
@@ -72,10 +92,12 @@ const deferred = node({
   ] } } },
 });
 
-const note = sticky('## Post-admission metadata\nThemes and dimensions are assigned only after semantic admission. Metadata can never change the admission decision. If the metadata provider is unavailable, accepted questions remain accepted and can be backfilled later.', [read, metadata, apply], { color: 2 });
+const note = sticky('## Post-admission metadata\nClaim unfinished accepted questions before every paid call. Each group has a unique tracked attempt. Valid items are committed independently; missing or invalid items remain resumable without changing admission.', [read, metadata, apply], { color: 2 });
 
 export default workflow('qb3-metadata-stage', 'Assign Question Bank batch metadata')
-  .add(input).to(read).to(hasQuestions
-    .onTrue(metadata.to(metadataOk.onTrue(apply.to(done)).onFalse(deferred)))
-    .onFalse(done))
+  .add(input.to(read).to(hasQuestions
+    .onTrue(metadata.to(metadataOk
+      .onTrue(apply.to(allApplied.onTrue(done).onFalse(deferred)))
+      .onFalse(markFailure.to(deferred))))
+    .onFalse(done)))
   .add(note);

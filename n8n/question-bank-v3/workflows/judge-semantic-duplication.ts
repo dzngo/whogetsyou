@@ -6,7 +6,7 @@ const input = trigger({
     { name: 'campaign_id', type: 'string' }, { name: 'batch_id', type: 'string' },
     { name: 'candidate_id', type: 'string' }, { name: 'mission_id', type: 'string' },
     { name: 'attempt_id', type: 'string' }, { name: 'invocation_id', type: 'string' },
-    { name: 'context', type: 'object' },
+    { name: 'context', type: 'object' }, { name: 'work_group_id', type: 'string' },
   ] } } },
 });
 
@@ -37,6 +37,7 @@ const invoke = node({
       model_waterfall: expr("{{ (() => { const r = $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'semantic_judge'); return typeof r.modelWaterfall_object === 'string' ? JSON.parse(r.modelWaterfall_object) : r.modelWaterfall_object; })() }}"),
       reasoning_setting: 'high',
       reservation_usd: expr("{{ $('Load frozen prompt').item.json.configuration.runtimes.find(x => x.runtimeKey === 'semantic_judge').reservationUsd }}"),
+      work_group_id: expr("{{ $('Agent input').item.json.work_group_id || '' }}"),
     }, matchingColumns: [], schema: [
       { id: 'campaign_id', displayName: 'campaign_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'batch_id', displayName: 'batch_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
@@ -49,9 +50,10 @@ const invoke = node({
       { id: 'context', displayName: 'context', type: 'object', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'model_waterfall', displayName: 'model_waterfall', type: 'array', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
       { id: 'reasoning_setting', displayName: 'reasoning_setting', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
-      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
+      { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string', required: false, defaultMatch: false, display: true, canBeUsedToMatch: true }
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true }
   } },
 });
 
-export default workflow('qb3-judge-semantic-duplication', 'Judge semantic duplication').add(input).to(loadPrompt).to(invoke);
+export default workflow('qb3-judge-semantic-duplication', 'Judge semantic duplication').add(input.to(loadPrompt).to(invoke));

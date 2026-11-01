@@ -10,7 +10,7 @@ const input = trigger({
 const candidates = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Read quality-approved candidates', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "with candidates as materialized (select * from qb3.get_preflight_candidates($1::uuid)) select candidate_id, question_text, level, true as has_items from candidates union all select null::uuid, ''::text, ''::text, false where not exists (select 1 from candidates);",
+    operation: 'executeQuery', query: "with claimed as materialized (select * from qb3.claim_candidate_stage_groups($1::uuid, 'embedding', 1)), candidates as materialized (select (g.candidates -> 0 ->> 'candidate_id')::uuid as candidate_id, g.candidates -> 0 ->> 'question' as question_text, g.candidates -> 0 ->> 'level' as level, g.work_group_id from claimed g) select candidate_id, question_text, level, work_group_id, true as has_items from candidates union all select null::uuid, ''::text, ''::text, null::text, false where not exists (select 1 from candidates);",
     options: { queryReplacement: expr("{{ [$('Preflight stage input').item.json.batch_id] }}") },
   } },
 });
@@ -44,17 +44,19 @@ const embed = node({
   config: { name: 'Embed once and retrieve top ten', parameters: {
     mode: 'once', source: 'database', workflowId: { __rl: true, mode: 'id', value: '82dChxe6MtZcGnoh' },
     workflowInputs: { mappingMode: 'defineBelow', value: {
-      attempt_id: expr("{{ $('Preflight stage input').item.json.batch_id + '-embedding-' + $('Read quality-approved candidates').item.json.candidate_id }}"),
+      attempt_id: expr("{{ $('Read quality-approved candidates').item.json.work_group_id + '-embedding' }}"),
       campaign_id: expr("{{ $('Preflight stage input').item.json.campaign_id }}"), batch_id: expr("{{ $('Preflight stage input').item.json.batch_id }}"),
       candidate_id: expr("{{ $('Read quality-approved candidates').item.json.candidate_id }}"),
       question_text: expr("{{ $('Read quality-approved candidates').item.json.question_text }}"),
       reservation_usd: expr("{{ $('Preflight stage input').item.json.embedding_runtime.reservationUsd }}"),
       input_cost_per_million_usd: expr("{{ (() => { const w = $('Preflight stage input').item.json.embedding_runtime.modelWaterfall_object; const a = typeof w === 'string' ? JSON.parse(w) : w; return a[0].inputCostPerMillionUsd; })() }}"),
+      work_group_id: expr("{{ $('Read quality-approved candidates').item.json.work_group_id }}"),
     }, matchingColumns: [], schema: [
       { id: 'attempt_id', displayName: 'attempt_id', type: 'string' }, { id: 'campaign_id', displayName: 'campaign_id', type: 'string' },
       { id: 'batch_id', displayName: 'batch_id', type: 'string' }, { id: 'candidate_id', displayName: 'candidate_id', type: 'string' },
       { id: 'question_text', displayName: 'question_text', type: 'string' }, { id: 'reservation_usd', displayName: 'reservation_usd', type: 'number' },
       { id: 'input_cost_per_million_usd', displayName: 'input_cost_per_million_usd', type: 'number' },
+      { id: 'work_group_id', displayName: 'work_group_id', type: 'string' },
     ], attemptToConvertTypes: false, convertFieldsToString: true }, options: { waitForSubWorkflow: true },
   } },
 });
@@ -69,8 +71,8 @@ const embeddingOk = ifElse({ version: 2.3, config: { name: 'Embedding stored?', 
 const markCandidate = node({
   type: 'n8n-nodes-base.postgres', version: 2.7,
   config: { name: 'Isolate failed embedding candidate', credentials: { postgres: newCredential('Question Bank v3 Postgres', 'h3ZyIgobxf9KpDG3') }, parameters: {
-    operation: 'executeQuery', query: "select count(*)::integer as marked_count from qb3.mark_candidates_operationally_unresolved($1::uuid, $2::jsonb, 'embedding', 'Embedding provider attempt failed or budget was unavailable');",
-    options: { queryReplacement: expr("{{ [$('Preflight stage input').item.json.batch_id, JSON.stringify([$('Read quality-approved candidates').item.json.candidate_id])] }}") },
+    operation: 'executeQuery', query: "select * from qb3.finish_candidate_stage_group_failure($1, 'embedding', $2, $3::boolean);",
+    options: { queryReplacement: expr("{{ [$('Read quality-approved candidates').item.json.work_group_id, $('Embed once and retrieve top ten').item.json.reason || $('Embed once and retrieve top ten').item.json.status || 'invalid_embedding_output', ['retryable_failure','unknown_spend'].includes($('Embed once and retrieve top ten').item.json.status) || $('Embed once and retrieve top ten').item.json.reason === 'embedding_provider_failure'] }}") },
   } },
 });
 
@@ -85,7 +87,7 @@ const done = node({
 const note = sticky('## Exact duplicate and vector retrieval\nEvery quality-approved candidate is normalized. Exact accepted-bank matches stop here. Every survivor is embedded exactly once and retrieves at most ten nearest accepted questions.', [candidates, candidateLoop, preflight, embed, markCandidate], { color: 4 });
 
 export default workflow('qb3-preflight-embed-stage', 'Preflight and embed Question Bank batch')
-  .add(input).to(candidates).to(candidatesAvailable
+  .add(input.to(candidates).to(candidatesAvailable
     .onTrue(candidateLoop
       .onEachBatch(preflight.to(isExactDuplicate
         .onTrue(nextBatch(candidateLoop))
@@ -93,5 +95,5 @@ export default workflow('qb3-preflight-embed-stage', 'Preflight and embed Questi
           .onTrue(nextBatch(candidateLoop))
           .onFalse(markCandidate.to(nextBatch(candidateLoop)))))))
       .onDone(done))
-    .onFalse(done))
+    .onFalse(done)))
   .add(note);

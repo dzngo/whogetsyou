@@ -96,6 +96,14 @@ _Avoid_: Question Candidate, mutable question row
 A trusted question that has passed the Question Quality Floor but is not yet part of a Question Bank Release. Its classification metadata may still be pending without weakening the trust in its question text.
 _Avoid_: Question Candidate, published question
 
+**Ready Question**:
+A Staged Question whose required classification metadata is complete and validated.
+_Avoid_: Accepted Question, metadata-pending question
+
+**Enrichment Campaign**:
+A budget-bounded, resumable effort to add a target number of Ready Questions to the Question Bank.
+_Avoid_: Round, batch, provider attempt
+
 **Question Bank Snapshot**:
 An immutable, versioned selection of exact Question Revisions and taxonomy definitions. A snapshot makes evaluation and later gameplay integration reproducible even after questions are corrected or retired.
 _Avoid_: live query result, Question Bank
