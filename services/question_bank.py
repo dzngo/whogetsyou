@@ -8,6 +8,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
+
 BANK_PATH = Path(__file__).resolve().parent.parent / 'storage' / 'curated_question_bank' / 'questions.json'
 
 
@@ -31,6 +32,11 @@ def load_questions() -> list[dict]:
     url = os.getenv('QUESTION_DB_NEO_URL') or os.getenv('QUESTION_STATS_DATABASE_URL')
     if not url:
         raise RuntimeError('QUESTION_DB_NEO_URL is required to load production questions')
+    return _load_neon_questions(url)
+
+
+def _load_neon_questions(url: str) -> list[dict]:
+    """Read the latest question-bank data from Neon."""
     try:
         import psycopg
         from psycopg.rows import dict_row

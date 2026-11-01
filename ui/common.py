@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 import streamlit as st
-from streamlit.components.v1 import html as components_html
 
 from models import LANGUAGE_FLAGS, Room, SUPPORTED_LANGUAGES, SUPPORTED_LLM_MODELS
 
@@ -67,11 +66,11 @@ def room_join_label(room: Room) -> str:
 
 def style_buttons() -> None:
     """Inject client-side styling for key button categories."""
-    components_html(
+    st.html(
         """
         <script>
         (function() {
-          const root = window.parent?.document;
+          const root = document;
           if (!root) return;
           const warnColor = '#000000';
           const positiveColor = '#0f9d58';
@@ -150,5 +149,5 @@ def style_buttons() -> None:
         })();
         </script>
         """,
-        height=0,
+        unsafe_allow_javascript=True,
     )

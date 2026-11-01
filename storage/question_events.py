@@ -82,14 +82,40 @@ class QuestionEvents:
                 cursor.close()
 
     def record(self, event: dict) -> None:
+        self.record_many([event])
+
+    def record_many(self, events: list[dict]) -> None:
+        """Write one batch atomically; retry schema setup only for an uninitialized database."""
+        if not events:
+            return
+        try:
+            self._insert_events(events)
+        except Exception as exc:
+            missing_table = (
+                getattr(exc, 'sqlstate', None) == '42P01'
+                or (isinstance(exc, sqlite3.OperationalError) and 'no such table' in str(exc).lower())
+            )
+            if not missing_table:
+                raise
+            with self._connection() as db:
+                self._create_schema(db)
+            self._insert_events(events)
+
+    def _insert_events(self, events: list[dict]) -> None:
         placeholder = '%s' if self.environment == 'production' else '?'
+        question_ids = list(dict.fromkeys(event['question_id'] for event in events))
         with self._connection() as db:
-            self._create_schema(db)
-            db.execute(
-                f'INSERT INTO question_catalog (question_id) VALUES ({placeholder}) ON CONFLICT (question_id) DO NOTHING',
-                (event['question_id'],),
-            )
-            db.execute(
-                f'INSERT INTO question_events (event_id, question_id, action) VALUES ({placeholder}, {placeholder}, {placeholder}) ON CONFLICT (event_id) DO NOTHING',
-                (event['id'], event['question_id'], event['action']),
-            )
+            cursor = db.cursor()
+            try:
+                cursor.executemany(
+                    f'INSERT INTO question_catalog (question_id) VALUES ({placeholder}) '
+                    'ON CONFLICT (question_id) DO NOTHING',
+                    [(question_id,) for question_id in question_ids],
+                )
+                cursor.executemany(
+                    f'INSERT INTO question_events (event_id, question_id, action) '
+                    f'VALUES ({placeholder}, {placeholder}, {placeholder}) ON CONFLICT (event_id) DO NOTHING',
+                    [(event['id'], event['question_id'], event['action']) for event in events],
+                )
+            finally:
+                cursor.close()
