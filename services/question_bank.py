@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 from collections import Counter
@@ -10,13 +11,46 @@ from pathlib import Path
 BANK_PATH = Path(__file__).resolve().parent.parent / 'storage' / 'curated_question_bank' / 'questions.json'
 
 
-def load_questions(path: Path = BANK_PATH) -> list[dict]:
+def load_local_questions(path: Path = BANK_PATH) -> list[dict]:
+    """Read the local curated bank, including when preparing a Neon upload."""
     with path.open(encoding='utf-8') as source:
         data = json.load(source)
     questions = data['questions']
     if not isinstance(questions, list):
         raise ValueError('Invalid question bank')
     return questions
+
+
+def load_questions() -> list[dict]:
+    """Read the production bank from Neon; development uses local JSON."""
+    environment = os.getenv('WGY_ENV', 'development')
+    if environment == 'development':
+        return load_local_questions()
+    if environment != 'production':
+        raise ValueError('WGY_ENV must be development or production')
+    url = os.getenv('QUESTION_DB_NEO_URL') or os.getenv('QUESTION_STATS_DATABASE_URL')
+    if not url:
+        raise RuntimeError('QUESTION_DB_NEO_URL is required to load production questions')
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(url, connect_timeout=10, row_factory=dict_row) as connection:
+            rows = connection.execute(
+                'SELECT question_id AS id, question_text AS text, display_template, level, themes, approved_at '
+                'FROM question_bank ORDER BY question_id'
+            ).fetchall()
+        if not rows:
+            raise ValueError('The production question bank is empty')
+        for row in rows:
+            if not isinstance(row['themes'], list) or not all(isinstance(theme, str) for theme in row['themes']):
+                raise ValueError('A production question has invalid themes')
+            if row['approved_at'] is not None:
+                row['approved_at'] = row['approved_at'].isoformat()
+        return rows
+    except Exception:
+        # Database exceptions may include connection details; avoid exposing credentials.
+        raise RuntimeError('Unable to load the production question bank from Neon.') from None
 
 
 def eligible_questions(questions: list[dict], theme: str, level: str, seen: list[str], confirmed: list[str]) -> list[dict]:

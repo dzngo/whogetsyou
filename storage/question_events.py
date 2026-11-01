@@ -15,9 +15,9 @@ class QuestionEvents:
         if self.environment not in ('development', 'production'):
             raise ValueError('WGY_ENV must be development or production')
         self.path = sqlite_path or Path(__file__).resolve().parent / 'question_events_dev.sqlite3'
-        self.url = os.getenv('QUESTION_STATS_DATABASE_URL', '')
+        self.url = os.getenv('QUESTION_DB_NEO_URL') or os.getenv('QUESTION_STATS_DATABASE_URL', '')
         if self.environment == 'production' and not self.url:
-            raise ValueError('QUESTION_STATS_DATABASE_URL is required in production')
+            raise ValueError('QUESTION_DB_NEO_URL is required in production')
 
     @contextmanager
     def _connection(self):
